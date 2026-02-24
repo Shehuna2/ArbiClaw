@@ -1,5 +1,6 @@
 import { Contract, JsonRpcProvider } from 'ethers';
-import { DexQuoter, QuoteParams, QuoteResult } from '../DexQuoter.js';
+import { QuoteResult } from '../DexQuoter.js';
+import { Token } from '../../core/types.js';
 
 const AERODROME_ROUTER = '0xcF77a3Ba9A5CA399B7C97c74d54e5b648dEecf97';
 const AERODROME_FACTORY = '0x420DD381b31aEf6683db6B902084cB0FFECe40Da';
@@ -12,7 +13,7 @@ interface CachedQuote {
   result: QuoteResult | null;
 }
 
-export class AerodromeQuoter implements DexQuoter {
+export class AerodromeQuoter {
   public readonly id = 'aerodrome';
   private readonly router: Contract;
   private readonly cache = new Map<string, CachedQuote>();
@@ -23,42 +24,28 @@ export class AerodromeQuoter implements DexQuoter {
     this.router = new Contract(AERODROME_ROUTER, ROUTER_ABI, provider);
   }
 
-  async quoteExactIn(params: QuoteParams): Promise<QuoteResult | null> {
-    const { tokenIn, tokenOut, amountIn } = params;
-    const key = `${tokenIn.address}:${tokenOut.address}:${amountIn.toString()}`;
+  async quoteByMode(tokenIn: Token, tokenOut: Token, amountIn: bigint, stable: boolean): Promise<QuoteResult | null> {
+    const key = `${tokenIn.address}:${tokenOut.address}:${amountIn.toString()}:${stable ? 's' : 'v'}`;
     const now = Date.now();
     const hit = this.cache.get(key);
     if (hit && hit.expiryMs > now) return hit.result;
 
-    let best: QuoteResult | null = null;
-    for (const stable of [false, true]) {
-      try {
-        const amounts: bigint[] = await this.router.getAmountsOut(amountIn, [{
-          from: tokenIn.address,
-          to: tokenOut.address,
-          stable,
-          factory: AERODROME_FACTORY
-        }]);
-
-        const amountOut = amounts[amounts.length - 1];
-        if (!best || amountOut > best.amountOut) {
-          best = {
-            amountOut,
-            gasUnitsEstimate: undefined,
-            meta: { stable }
-          };
-        }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message.toLowerCase() : '';
-        if (msg.includes('revert') || msg.includes('execution reverted') || msg.includes('missing revert')) {
-          continue;
-        }
-        this.cache.set(key, { expiryMs: now + this.ttlMs, result: null });
-        return null;
-      }
+    try {
+      const amounts: bigint[] = await this.router.getAmountsOut(amountIn, [{
+        from: tokenIn.address,
+        to: tokenOut.address,
+        stable,
+        factory: AERODROME_FACTORY
+      }]);
+      const amountOut = amounts[amounts.length - 1];
+      const result = amountOut > 0n
+        ? { amountOut, gasUnitsEstimate: undefined, meta: { stable } }
+        : null;
+      this.cache.set(key, { expiryMs: now + this.ttlMs, result });
+      return result;
+    } catch {
+      this.cache.set(key, { expiryMs: now + this.ttlMs, result: null });
+      return null;
     }
-
-    this.cache.set(key, { expiryMs: now + this.ttlMs, result: best });
-    return best;
   }
 }

@@ -12,6 +12,10 @@ export interface ScanConfig {
   minProfitHuman: number;
   topN: number;
   maxTriangles: number;
+  maxCombosPerTriangle: number;
+  maxTotalQuotes: number;
+  timeBudgetMs: number;
+  quoteConcurrency: number;
   fees: number[];
   tokensPath: string;
   tokenSubset?: string[];
@@ -22,16 +26,17 @@ export interface RouteHop {
   dex: string;
   tokenIn: Token;
   tokenOut: Token;
-  fee?: number;
+  label: string;
 }
 
 export interface RouteCandidate {
   id: string;
-  hops: RouteHop[];
+  tokens: [Token, Token, Token, Token];
 }
 
 export interface SimResult {
   route: RouteCandidate;
+  hops: RouteHop[];
   startAmount: bigint;
   finalAmount: bigint;
   grossProfit: bigint;
@@ -39,4 +44,11 @@ export interface SimResult {
   netProfit: bigint;
   failed: boolean;
   failReason?: string;
+}
+
+export interface SimStats {
+  trianglesConsidered: number;
+  combosEnumerated: number;
+  quoteErrorsOrSkips: number;
+  quotesAttempted: number;
 }

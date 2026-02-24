@@ -2,58 +2,43 @@
 
 Dry-run triangular arbitrage scanner for Base. It never sends transactions.
 
-## Stack
-- Node.js + TypeScript (ESM)
-- ethers v6
-- dotenv
-
 ## Setup
-1. Install dependencies:
-   ```bash
-   npm i
-   ```
-2. Create env:
-   ```bash
-   cp .env.example .env
-   ```
-3. Set `BASE_RPC_URL` in `.env`.
+1. `npm i`
+2. `cp .env.example .env`
+3. Set `BASE_RPC_URL` in `.env`
 
-## Run (dev)
-Default run (Uniswap v3 only):
+## Run
+Uniswap only:
 ```bash
-npm run dev -- --amount 100 --minProfit 0 --top 10
+npm run dev -- --dexes uniswapv3 --amount 100 --minProfit 0 --top 10
 ```
 
-Token subset example:
+Mixed venues:
 ```bash
-npm run dev -- --amount 100 --minProfit 0 --top 10 --tokenSubset USDC,WETH,AERO,DEGEN --maxTriangles 2000
+npm run dev -- --dexes uniswapv3,aerodrome --tokenSubset USDC,WETH,AERO,DEGEN --maxTriangles 300 --maxCombosPerTriangle 500
 ```
 
-Enable Aerodrome + Uniswap:
-```bash
-npm run dev -- --dexes uniswapv3,aerodrome --tokenSubset USDC,WETH,AERO --maxTriangles 500
-```
+## Key flags
+- `--dexes <csv>` default `uniswapv3`
+- `--fees <csv>` default `500,3000,10000` (Uniswap fee tiers)
+- `--tokenSubset <csv>` must include `USDC`
+- `--maxTriangles <n>` cap triangle count
+- `--maxCombosPerTriangle <n>` default `500`
+- `--maxTotalQuotes <n>` default `4000`
+- `--timeBudgetMs <n>` default `20000`
+- `--quoteConcurrency <n>` default `6`
 
-## CLI flags
-- `--rpc <url>`: override `BASE_RPC_URL`
-- `--amount <number>`: input USDC amount
-- `--minProfit <number>`: minimum net profit threshold in USDC
-- `--top <number>`: number of opportunities to print
-- `--maxTriangles <number>`: safety cap for generated candidates
-- `--fees <csv>`: Uniswap v3 fee tiers, default `500,3000,10000`
-- `--tokens <path>`: token registry JSON path, default `tokens/base.top.json`
-- `--tokenSubset <csv>`: restrict symbols from token registry (must include `USDC`)
-- `--dexes <csv>`: enabled DEX quoters, default `uniswapv3`
+## Output
+Top results print full hop labels, e.g.
+`USDC -(UNI:500)-> WETH -(AERO:vol)-> AERO -(UNI:3000)-> USDC`
 
-## Build + run
-```bash
-npm run build
-npm start -- --amount 100 --minProfit 0 --top 5
-```
+Stats include:
+- triangles considered
+- combos enumerated
+- quote errors/skips
+- quotes attempted
 
-## Current limitations
-- Simulation only (no execution).
-- Aerodrome quoting is best-effort and may skip illiquid/unroutable pairs.
-- Some generated routes have no available pools/quotes and are skipped.
-- Routes are 2-hop USDC→TOKEN→USDC cycles with per-hop dex selection.
-- Gas is approximated in USDC from quote estimates and provider fee data.
+## Notes
+- Simulation-only (no execution path).
+- Aerodrome quotes are best-effort; illiquid pairs may be skipped.
+- Quote failures are handled and skipped without crashing.

@@ -30,14 +30,10 @@ export const parseConfig = (): ScanConfig => {
   if (!fees.length) throw new Error('No valid fees provided.');
 
   const tokenSubsetRaw = getArgValue('tokenSubset');
-  const tokenSubset = tokenSubsetRaw
-    ? tokenSubsetRaw.split(',').map((x) => x.trim()).filter((x) => x.length > 0)
-    : undefined;
+  const tokenSubset = tokenSubsetRaw ? tokenSubsetRaw.split(',').map((x) => x.trim()).filter(Boolean) : undefined;
 
   const dexesRaw = getArgValue('dexes');
-  const dexes = dexesRaw
-    ? dexesRaw.split(',').map((x) => x.trim().toLowerCase()).filter((x) => x.length > 0)
-    : DEFAULT_DEXES;
+  const dexes = dexesRaw ? dexesRaw.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean) : DEFAULT_DEXES;
   if (!dexes.length) throw new Error('No dexes enabled.');
 
   return {
@@ -46,6 +42,10 @@ export const parseConfig = (): ScanConfig => {
     minProfitHuman: getNumArg('minProfit', 0),
     topN: getNumArg('top', 20),
     maxTriangles: getNumArg('maxTriangles', 200),
+    maxCombosPerTriangle: getNumArg('maxCombosPerTriangle', 500),
+    maxTotalQuotes: getNumArg('maxTotalQuotes', 4000),
+    timeBudgetMs: getNumArg('timeBudgetMs', 20_000),
+    quoteConcurrency: getNumArg('quoteConcurrency', 6),
     fees,
     tokensPath: getArgValue('tokens') ?? DEFAULT_TOKENS_PATH,
     tokenSubset,
