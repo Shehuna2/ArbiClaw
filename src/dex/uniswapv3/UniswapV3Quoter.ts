@@ -16,7 +16,6 @@ export class UniswapV3Quoter {
 
   constructor(rpcUrl: string, public readonly feeTiers: number[]) {
     this.client = createUniV3Client(rpcUrl);
-    bindUniV3Factory(this.client.factory);
   }
 
   getLastError(): string {
