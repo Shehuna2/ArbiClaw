@@ -292,7 +292,7 @@ export const deriveEthToUsdcPrice = async (adapters: DexAdapters, usdc: Token, w
     }
   }
   if (adapters.aerodrome) {
-    const qVol = await adapters.aerodrome.quoteExactIn({ tokenIn: weth, tokenOut: usdc, amountIn });
+    const qVol = await adapters.aerodrome.quoteExactIn({ tokenIn: weth, tokenOut: usdc, amountIn }, 'deriveEthToUsdcPrice');
     if (qVol && qVol.amountOut > 0n) return fromUnits(qVol.amountOut, usdc.decimals);
     if (adapters.aerodrome.canUseStable(weth, usdc)) {
       const qStable = await adapters.aerodrome.quoteByMode(weth, usdc, amountIn, true);

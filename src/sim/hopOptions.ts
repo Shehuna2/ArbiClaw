@@ -84,7 +84,7 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
       dexId: 'aerodrome',
       label: 'AERO:vol',
       quote: async (amountIn: bigint) => {
-        const result = await adapters.aerodrome?.quoteExactIn({ tokenIn, tokenOut, amountIn });
+        const result = await adapters.aerodrome?.quoteExactIn({ tokenIn, tokenOut, amountIn }, 'hopOptions');
         return result ? { amountOut: result.amountOut, gasUnitsEstimate: result.gasUnitsEstimate } : null;
       }
     });

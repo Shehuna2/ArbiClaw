@@ -36,6 +36,11 @@ export class AerodromeQuoter {
     const provider = new JsonRpcProvider(rpcUrl);
     this.router = new Contract(AERODROME_ROUTER, ROUTER_ABI, provider);
     this.factory = new Contract(AERODROME_FACTORY, FACTORY_ABI, provider);
+
+    const selector = this.router.interface.getFunction('getAmountsOut')?.selector ?? 'unknown';
+    if (selector !== '0x5509a1ac') {
+      throw new Error(`Aerodrome ABI mismatch: expected selector 0x5509a1ac, got ${selector}`);
+    }
   }
 
   getLastError(includeSelector = false): string {
@@ -68,12 +73,21 @@ export class AerodromeQuoter {
   }
 
 
-  async quoteExactIn(params: QuoteParams): Promise<QuoteResult | null> {
+  async quoteExactIn(params: QuoteParams, callsite = 'unknown'): Promise<QuoteResult | null> {
+    if (process.argv.includes('--debugHops') || process.argv.includes('--selfTest')) {
+      const selector = this.router.interface.getFunction('getAmountsOut')?.selector ?? 'unknown';
+      const calldata = this.encodeGetAmountsOutCalldata(params.tokenIn.address, params.tokenOut.address, params.amountIn, false);
+      log.info('aerodrome-quoteexactin-calldata', {
+        callsite,
+        selector,
+        first10Bytes: calldata.slice(0, 22)
+      });
+    }
     return this.quoteByMode(params.tokenIn, params.tokenOut, params.amountIn, false);
   }
 
   async quotePreferred(tokenIn: Token, tokenOut: Token, amountIn: bigint): Promise<QuoteResult | null> {
-    const qVol = await this.quoteExactIn({ tokenIn, tokenOut, amountIn });
+    const qVol = await this.quoteExactIn({ tokenIn, tokenOut, amountIn }, 'quotePreferred');
     if (qVol) return qVol;
     if (!this.canUseStable(tokenIn, tokenOut)) {
       this.lastError = 'STABLE_SKIPPED: pair not stable-eligible';
