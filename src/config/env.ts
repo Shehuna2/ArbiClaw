@@ -17,6 +17,16 @@ const getArgValue = (name: string): string | undefined => {
 
 const hasFlag = (name: string): boolean => process.argv.includes(`--${name}`);
 
+
+const getRequiredArgValue = (name: string): string => {
+  const idx = process.argv.indexOf(`--${name}`);
+  if (idx === -1) throw new Error(`Missing --${name}`);
+  if (idx + 1 >= process.argv.length || process.argv[idx + 1].startsWith('--')) {
+    throw new Error(`Flag --${name} requires a value.`);
+  }
+  return process.argv[idx + 1];
+};
+
 const getNumArg = (name: string, fallback: number): number => {
   const raw = getArgValue(name);
   if (!raw) return fallback;
@@ -46,6 +56,8 @@ export const parseConfig = (): ScanConfig => {
   const dexes = dexesRaw ? dexesRaw.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean) : DEFAULT_DEXES;
   if (!dexes.length) throw new Error('No dexes enabled.');
 
+  const jsonOutput = hasFlag('json') ? getRequiredArgValue('json') : undefined;
+
   return {
     rpcUrl,
     amountInHuman: getDecimalArg('amount', '100'),
@@ -63,6 +75,7 @@ export const parseConfig = (): ScanConfig => {
     aeroStablePairsPath: getArgValue('aeroStablePairs') ?? DEFAULT_AERO_STABLE_PAIRS_PATH,
     tokensPath: getArgValue('tokens') ?? DEFAULT_TOKENS_PATH,
     tokenSubset,
-    dexes
+    dexes,
+    jsonOutput
   };
 };

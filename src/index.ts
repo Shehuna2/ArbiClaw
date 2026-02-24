@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { JsonRpcProvider } from 'ethers';
 import { parseConfig } from './config/env.js';
 import { loadFeePrefs } from './config/fees.js';
@@ -164,6 +166,32 @@ const filterTrianglesWithHopOptions = async (
   return filtered;
 };
 
+
+interface JsonOpportunity {
+  triangle: string;
+  hops: Array<{ dex: string; label: string; tokenIn: string; tokenOut: string }>;
+  startUsdc: string;
+  endUsdc: string;
+  grossProfitUsdc: string;
+  gasCostUsdc: string;
+  netProfitUsdc: string;
+  startUsdcHuman: string;
+  netProfitUsdcHuman: string;
+}
+
+const writeJsonOutput = async (pathOrDash: string, payload: unknown): Promise<void> => {
+  const body = JSON.stringify(payload, null, 2);
+  if (pathOrDash === '-') {
+    process.stdout.write(`${body}
+`);
+    return;
+  }
+
+  await mkdir(dirname(pathOrDash), { recursive: true });
+  await writeFile(pathOrDash, `${body}
+`, 'utf-8');
+};
+
 const emptyStats = (trianglesSkippedNoHopOptions: number): SimStats => ({
   trianglesConsidered: 0,
   combosEnumerated: 0,
@@ -216,6 +244,9 @@ const main = async () => {
     return;
   }
 
+  const provider = new JsonRpcProvider(cfg.rpcUrl);
+  const network = await provider.getNetwork();
+
   const midTokens = selectedTokens.filter((token) => token.symbol !== START_SYMBOL);
   const triangleCandidates = generateTriangles(startToken, midTokens, cfg.maxTriangles);
   const triangles = await filterTrianglesWithHopOptions(triangleCandidates, adapters, feePrefs, cfg.debugHops);
@@ -245,12 +276,25 @@ const main = async () => {
   });
 
   if (!triangles.length) {
+    const stats = { ...emptyStats(trianglesSkippedNoHopOptions) };
     log.warn('No triangles generated after hop-option filtering.');
-    log.info('stats', { ...emptyStats(trianglesSkippedNoHopOptions) });
+    log.info('stats', stats);
+
+    if (cfg.jsonOutput) {
+      await writeJsonOutput(cfg.jsonOutput, {
+        meta: {
+          ts: new Date().toISOString(),
+          chainId: Number(network.chainId),
+          rpc: cfg.rpcUrl,
+          config: cfg
+        },
+        stats,
+        opportunities: []
+      });
+    }
     return;
   }
 
-  const provider = new JsonRpcProvider(cfg.rpcUrl);
   const feeData = await provider.getFeeData();
   const gasPriceWei = feeData.gasPrice ?? feeData.maxFeePerGas ?? 1_000_000_000n;
 
@@ -273,6 +317,17 @@ const main = async () => {
   });
 
   const winners = results.sort((a, b) => cmpBigintDesc(a.netProfit, b.netProfit)).slice(0, cfg.topN);
+  const jsonOpportunities: JsonOpportunity[] = winners.map((row) => ({
+    triangle: row.route.id,
+    hops: row.hops.map((h) => ({ dex: h.dex, label: h.label, tokenIn: h.tokenIn.symbol, tokenOut: h.tokenOut.symbol })),
+    startUsdc: row.startAmount.toString(),
+    endUsdc: row.finalAmount.toString(),
+    grossProfitUsdc: row.grossProfit.toString(),
+    gasCostUsdc: row.gasCostUsdc.toString(),
+    netProfitUsdc: row.netProfit.toString(),
+    startUsdcHuman: formatFixed(row.startAmount, startToken.decimals),
+    netProfitUsdcHuman: formatFixed(row.netProfit, startToken.decimals)
+  }));
   for (const [idx, row] of winners.entries()) {
     const route = row.hops.map((h) => `${h.tokenIn.symbol} -(${h.label})-> ${h.tokenOut.symbol}`).join(' ');
     log.info(`opportunity-${idx + 1}`, {
@@ -283,7 +338,21 @@ const main = async () => {
     });
   }
 
-  log.info('stats', { ...stats, trianglesSkippedNoHopOptions: stats.trianglesSkippedNoHopOptions + trianglesSkippedNoHopOptions });
+  const finalStats = { ...stats, trianglesSkippedNoHopOptions: stats.trianglesSkippedNoHopOptions + trianglesSkippedNoHopOptions };
+  log.info('stats', finalStats);
+
+  if (cfg.jsonOutput) {
+    await writeJsonOutput(cfg.jsonOutput, {
+      meta: {
+        ts: new Date().toISOString(),
+        chainId: Number(network.chainId),
+        rpc: cfg.rpcUrl,
+        config: cfg
+      },
+      stats: finalStats,
+      opportunities: jsonOpportunities
+    });
+  }
 };
 
 main().catch((error) => {

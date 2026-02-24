@@ -24,6 +24,7 @@ export interface ScanConfig {
   tokensPath: string;
   tokenSubset?: string[];
   dexes: string[];
+  jsonOutput?: string;
 }
 
 export interface RouteHop {
