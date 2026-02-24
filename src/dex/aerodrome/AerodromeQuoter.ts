@@ -10,8 +10,6 @@ const ROUTER_ABI = [
   'function getAmountsOut(uint256 amountIn, tuple(address from,address to,bool stable,address factory)[] routes) view returns (uint256[] amounts)'
 ];
 const GET_AMOUNTS_OUT_FN = 'getAmountsOut(uint256,(address,address,bool,address)[])';
-const FACTORY_ABI = ['function getPool(address tokenA, address tokenB, bool stable) external view returns (address pool)'];
-const ZERO = '0x0000000000000000000000000000000000000000';
 
 interface CachedQuote {
   expiryMs: number;
@@ -27,7 +25,6 @@ const summarizeErr = (error: unknown): string => {
 export class AerodromeQuoter {
   public readonly id = 'aerodrome';
   private readonly router: Contract;
-  private readonly factory: Contract;
   private readonly cache = new Map<string, CachedQuote>();
   private readonly ttlMs = 8_000;
   private lastError = '';
@@ -36,7 +33,6 @@ export class AerodromeQuoter {
   constructor(rpcUrl: string, private readonly stableConfig: StableConfig) {
     const provider = new JsonRpcProvider(rpcUrl);
     this.router = new Contract(AERODROME_ROUTER, ROUTER_ABI, provider);
-    this.factory = new Contract(AERODROME_FACTORY, FACTORY_ABI, provider);
 
     const selector = this.router.interface.getFunction(GET_AMOUNTS_OUT_FN)?.selector ?? 'unknown';
     if (selector !== '0x5509a1ac') {
@@ -113,24 +109,16 @@ export class AerodromeQuoter {
     if (hit && hit.expiryMs > now) return hit.result;
 
     try {
-      const pool = await this.factory.getPool(tokenIn.address, tokenOut.address, stable);
-      if (pool === ZERO) {
-        const result = null;
-        this.cache.set(key, { expiryMs: now + this.ttlMs, result });
-        this.lastError = stable ? 'STABLE_SKIPPED: no pool' : 'NO_POOL: aerodrome volatile pair not deployed';
-        return result;
-      }
-
       const routes: [string, string, boolean, string][] = [[tokenIn.address, tokenOut.address, stable, AERODROME_FACTORY]];
       const amounts: bigint[] = await this.router.getFunction(GET_AMOUNTS_OUT_FN).staticCall(amountIn, routes);
       const amountOut = amounts[amounts.length - 1];
       const result = amountOut > 0n ? { amountOut, gasUnitsEstimate: undefined, meta: { stable } } : null;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result });
-      this.lastError = result ? '' : 'ZERO_OUT: aerodrome returned zero amount';
+      this.lastError = result ? '' : 'ZERO_OUT: routerQuote returned zero amount';
       return result;
     } catch (error) {
       const summary = summarizeErr(error);
-      this.lastError = stable ? `STABLE_REVERT_EXPECTED: ${summary}` : summary;
+      this.lastError = stable ? `routerQuote STABLE_REVERT_EXPECTED: ${summary}` : `routerQuote: ${summary}`;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result: null });
       return null;
     }
