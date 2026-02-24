@@ -19,8 +19,14 @@ Dry-run triangular arbitrage scanner for Base using Uniswap v3 quotes only. It n
 3. Set `BASE_RPC_URL` in `.env`.
 
 ## Run (dev)
+Default token universe (`tokens/base.top.json`):
 ```bash
-npm run dev -- --amount 100 --minProfit 0.05 --top 20
+npm run dev -- --amount 100 --minProfit 0 --top 10
+```
+
+Token subset example:
+```bash
+npm run dev -- --amount 100 --minProfit 0 --top 10 --tokenSubset USDC,WETH,AERO,DEGEN --maxTriangles 2000
 ```
 
 ## CLI flags
@@ -30,6 +36,8 @@ npm run dev -- --amount 100 --minProfit 0.05 --top 20
 - `--top <number>`: number of opportunities to print
 - `--maxTriangles <number>`: safety cap for generated candidates
 - `--fees <csv>`: fee tiers, default `500,3000,10000`
+- `--tokens <path>`: token registry JSON path, default `tokens/base.top.json`
+- `--tokenSubset <csv>`: restrict symbols from token registry (must include `USDC`)
 
 ## Build + run
 ```bash
@@ -39,6 +47,6 @@ npm start -- --amount 100 --minProfit 0 --top 5
 
 ## Current limitations
 - Uniswap v3 only.
-- Token list is minimal (`USDC`, `WETH`).
-- Routes are currently 2-hop USDC↔WETH fee-tier cycles.
+- Some generated routes have no available pools and are skipped.
+- Routes are 2-hop USDC→TOKEN→USDC fee-tier cycles.
 - Gas is approximated in USDC from quote gasEstimate and fee data.

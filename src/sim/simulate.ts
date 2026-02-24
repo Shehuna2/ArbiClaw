@@ -14,21 +14,24 @@ interface SimulateParams {
 
 export const simulateRoutes = async (params: SimulateParams): Promise<SimResult[]> => {
   const { quoter, routes, startToken, amountInHuman, minProfitHuman } = params;
+  if (!routes.length) return [];
+
   const startAmount = toUnits(amountInHuman, startToken.decimals);
   const minProfit = toUnits(minProfitHuman, startToken.decimals);
   const gasPriceWei = await quoter.getGasPriceWei();
 
   let ethToUsdcPrice = 0;
   try {
+    const gasRefToken = routes[0].hops[0].tokenOut;
     const oneEthOut = await quoter.quoteExactInSingle({
-      tokenIn: routes[0].hops[0].tokenOut,
+      tokenIn: gasRefToken,
       tokenOut: startToken,
       fee: 3000,
       amountIn: 10n ** 18n
     });
     ethToUsdcPrice = fromUnits(oneEthOut.amountOut, startToken.decimals);
   } catch {
-    log.warn('Could not derive WETH/USDC for gas conversion. Using zero gas USDC cost.');
+    log.warn('Could not derive gas reference price for conversion. Using zero gas USDC cost.');
   }
 
   const results = await runLimited(routes, 8, async (route) => {

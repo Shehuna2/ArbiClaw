@@ -13,6 +13,8 @@ export interface ScanConfig {
   topN: number;
   maxTriangles: number;
   fees: number[];
+  tokensPath: string;
+  tokenSubset?: string[];
 }
 
 export interface RouteHop {

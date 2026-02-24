@@ -4,6 +4,7 @@ import { ScanConfig } from '../core/types.js';
 dotenv.config();
 
 const DEFAULT_FEES = [500, 3000, 10000];
+const DEFAULT_TOKENS_PATH = 'tokens/base.top.json';
 
 const getArgValue = (name: string): string | undefined => {
   const idx = process.argv.indexOf(`--${name}`);
@@ -27,12 +28,19 @@ export const parseConfig = (): ScanConfig => {
   const fees = feesRaw ? feesRaw.split(',').map((x) => Number(x.trim())).filter((x) => Number.isInteger(x)) : DEFAULT_FEES;
   if (!fees.length) throw new Error('No valid fees provided.');
 
+  const tokenSubsetRaw = getArgValue('tokenSubset');
+  const tokenSubset = tokenSubsetRaw
+    ? tokenSubsetRaw.split(',').map((x) => x.trim()).filter((x) => x.length > 0)
+    : undefined;
+
   return {
     rpcUrl,
     amountInHuman: getNumArg('amount', 100),
     minProfitHuman: getNumArg('minProfit', 0),
     topN: getNumArg('top', 20),
     maxTriangles: getNumArg('maxTriangles', 200),
-    fees
+    fees,
+    tokensPath: getArgValue('tokens') ?? DEFAULT_TOKENS_PATH,
+    tokenSubset
   };
 };

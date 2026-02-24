@@ -7,8 +7,9 @@ export const generateTriangles = (
   maxTriangles: number
 ): RouteCandidate[] => {
   const routes: RouteCandidate[] = [];
+  const sortedMidTokens = [...midTokens].sort((a, b) => a.symbol.localeCompare(b.symbol));
 
-  for (const token of midTokens) {
+  for (const token of sortedMidTokens) {
     for (const feeIn of fees) {
       for (const feeOut of fees) {
         routes.push({

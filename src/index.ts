@@ -1,14 +1,42 @@
 import { parseConfig } from './config/env.js';
-import { START_TOKEN, TRIANGLE_TOKENS } from './config/tokens.js';
+import { START_SYMBOL } from './config/tokens.js';
+import { loadTokens } from './config/loadTokens.js';
+import { Token } from './core/types.js';
 import { formatFixed } from './core/math.js';
 import { log } from './core/log.js';
 import { UniswapV3Quoter } from './dex/uniswapv3/quoter.js';
 import { generateTriangles } from './sim/triangles.js';
 import { simulateRoutes } from './sim/simulate.js';
 
+const applySubset = (tokens: Token[], subset?: string[]): Token[] => {
+  if (!subset || subset.length === 0) return tokens;
+
+  const symbolSet = new Set(subset);
+  if (!symbolSet.has(START_SYMBOL)) {
+    throw new Error(`--tokenSubset must include ${START_SYMBOL}`);
+  }
+
+  const bySymbol = new Map(tokens.map((t) => [t.symbol, t]));
+  for (const symbol of symbolSet) {
+    if (!bySymbol.has(symbol)) {
+      throw new Error(`Token ${symbol} not found in registry.`);
+    }
+  }
+
+  return tokens.filter((t) => symbolSet.has(t.symbol));
+};
+
 const main = async () => {
   const cfg = parseConfig();
-  const routes = generateTriangles(START_TOKEN, TRIANGLE_TOKENS, cfg.fees, cfg.maxTriangles);
+  const allTokens = await loadTokens(cfg.tokensPath);
+  const selectedTokens = applySubset(allTokens, cfg.tokenSubset);
+  const startToken = selectedTokens.find((token) => token.symbol === START_SYMBOL);
+  if (!startToken) {
+    throw new Error(`Token registry must include ${START_SYMBOL}`);
+  }
+
+  const midTokens = selectedTokens.filter((token) => token.symbol !== START_SYMBOL);
+  const routes = generateTriangles(startToken, midTokens, cfg.fees, cfg.maxTriangles);
 
   log.info('scan-config', {
     rpc: cfg.rpcUrl,
@@ -17,6 +45,8 @@ const main = async () => {
     top: cfg.topN,
     maxTriangles: cfg.maxTriangles,
     fees: cfg.fees,
+    tokensPath: cfg.tokensPath,
+    selectedTokens: selectedTokens.map((t) => t.symbol).sort(),
     triangles: routes.length
   });
 
@@ -29,7 +59,7 @@ const main = async () => {
   const results = await simulateRoutes({
     quoter,
     routes,
-    startToken: START_TOKEN,
+    startToken,
     amountInHuman: cfg.amountInHuman,
     minProfitHuman: cfg.minProfitHuman
   });
@@ -47,9 +77,9 @@ const main = async () => {
     const route = row.route.hops.map((h) => `${h.tokenIn.symbol}-${h.tokenOut.symbol}@${h.fee}`).join(' | ');
     log.info(`opportunity-${idx + 1}`, {
       route,
-      grossProfitUSDC: formatFixed(row.grossProfit, START_TOKEN.decimals),
-      gasCostUSDC: formatFixed(row.gasCostUsdc, START_TOKEN.decimals),
-      netProfitUSDC: formatFixed(row.netProfit, START_TOKEN.decimals)
+      grossProfitUSDC: formatFixed(row.grossProfit, startToken.decimals),
+      gasCostUSDC: formatFixed(row.gasCostUsdc, startToken.decimals),
+      netProfitUSDC: formatFixed(row.netProfit, startToken.decimals)
     });
   }
 
