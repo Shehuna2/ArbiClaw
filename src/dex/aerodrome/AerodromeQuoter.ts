@@ -44,6 +44,12 @@ export class AerodromeQuoter {
     return isStableEligiblePair(tokenIn, tokenOut, this.stableConfig);
   }
 
+
+  encodeGetAmountsOutCalldata(tokenIn: string, tokenOut: string, amountIn: bigint, stable: boolean): string {
+    const routes: [string, string, boolean, string][] = [[tokenIn, tokenOut, stable, AERODROME_FACTORY]];
+    return this.router.interface.encodeFunctionData('getAmountsOut', [amountIn, routes]);
+  }
+
   async quotePreferred(tokenIn: Token, tokenOut: Token, amountIn: bigint): Promise<QuoteResult | null> {
     const qVol = await this.quoteByMode(tokenIn, tokenOut, amountIn, false);
     if (qVol) return qVol;

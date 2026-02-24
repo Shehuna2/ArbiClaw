@@ -23,6 +23,31 @@ const applySubset = (tokens: Token[], subset?: string[]): Token[] => {
   return tokens.filter((t) => symbolSet.has(t.symbol.toUpperCase()));
 };
 
+
+const assertAerodromeCalldataEncoding = (adapters: { aerodrome?: AerodromeQuoter }, usdc: Token, weth: Token, debugHops: boolean, selfTest: boolean): boolean => {
+  if (!adapters.aerodrome || (!debugHops && !selfTest)) return true;
+  const amountIn = toUnits(100, usdc.decimals);
+  const calldata = adapters.aerodrome.encodeGetAmountsOutCalldata(usdc.address, weth.address, amountIn, false);
+  const selector = calldata.slice(0, 10);
+  const firstWord = calldata.slice(10, 74);
+  const first20Bytes = calldata.slice(0, 42);
+  const expectedAmountWord = amountIn.toString(16).padStart(64, '0');
+
+  log.info('aerodrome-calldata-check', {
+    pair: 'USDC/WETH',
+    selector,
+    first20Bytes,
+    firstWordPrefix: firstWord.slice(0, 16)
+  });
+
+  if (firstWord !== expectedAmountWord) {
+    log.error('aerodrome-calldata-invalid', { expectedAmountWordPrefix: expectedAmountWord.slice(0, 16), gotPrefix: firstWord.slice(0, 16) });
+    return false;
+  }
+
+  return true;
+};
+
 const runSelfTest = async (
   adapters: { uniswapv3?: UniswapV3Quoter; aerodrome?: AerodromeQuoter },
   selectedTokens: Token[]
@@ -30,6 +55,8 @@ const runSelfTest = async (
   const usdc = selectedTokens.find((t) => t.symbol === 'USDC');
   const weth = selectedTokens.find((t) => t.symbol === 'WETH');
   if (!usdc || !weth) throw new Error('Self-test requires USDC and WETH in token set.');
+
+  if (!assertAerodromeCalldataEncoding(adapters, usdc, weth, false, true)) return false;
 
   const amountIn = toUnits(100, usdc.decimals);
   let success = 0;
@@ -62,6 +89,16 @@ const runSelfTest = async (
     } else {
       console.log(JSON.stringify({ dex: 'aerodrome', pair: 'USDC/WETH', mode: 'stable', ok: false, skipped: true, err: 'STABLE_SKIPPED: pair not stable-eligible' }));
     }
+  }
+
+  if (!aeroVolUsdcWethOk && adapters.aerodrome) {
+    console.error('Self-test failed: aerodrome volatile USDC->WETH quote failed.');
+    return false;
+  }
+
+  if (!uniUsdcWethOk && adapters.uniswapv3) {
+    console.error('Self-test failed: uniswapv3 USDC->WETH quote failed for all fee tiers.');
+    return false;
   }
 
   if (!uniUsdcWethOk && !aeroVolUsdcWethOk) {
@@ -167,6 +204,12 @@ const main = async () => {
   const enabledDexes = Object.keys(adapters).sort();
   if (!enabledDexes.length) throw new Error('No supported dexes enabled.');
 
+  const usdc = selectedTokens.find((t) => t.symbol === 'USDC');
+  const weth = selectedTokens.find((t) => t.symbol === 'WETH');
+  if (usdc && weth && !assertAerodromeCalldataEncoding(adapters, usdc, weth, cfg.debugHops, false)) {
+    process.exit(1);
+  }
+
   if (cfg.selfTest) {
     const ok = await runSelfTest(adapters, selectedTokens);
     if (!ok) process.exit(1);
@@ -211,8 +254,6 @@ const main = async () => {
   const feeData = await provider.getFeeData();
   const gasPriceWei = feeData.gasPrice ?? feeData.maxFeePerGas ?? 1_000_000_000n;
 
-  const usdc = selectedTokens.find((t) => t.symbol === 'USDC');
-  const weth = selectedTokens.find((t) => t.symbol === 'WETH');
   const ethToUsdcPrice = usdc && weth ? await deriveEthToUsdcPrice(adapters, usdc, weth) : 0;
 
   const { results, stats } = await simulateTriangles({
