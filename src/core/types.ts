@@ -17,7 +17,9 @@ export interface ScanConfig {
   timeBudgetMs: number;
   quoteConcurrency: number;
   selfTest: boolean;
+  debugHops: boolean;
   fees: number[];
+  feeConfigPath?: string;
   tokensPath: string;
   tokenSubset?: string[];
   dexes: string[];
@@ -50,8 +52,9 @@ export interface SimResult {
 export interface SimStats {
   trianglesConsidered: number;
   combosEnumerated: number;
-  quoteErrorsOrSkips: number;
-  quotesAttempted: number;
+  trianglesSkippedNoHopOptions: number;
+  quoteAttempts: number;
+  quoteFailures: number;
   errorsByDex: Record<string, number>;
   errorsByHop: Record<string, number>;
   topErrorsByDex: Record<string, string[]>;

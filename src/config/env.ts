@@ -6,6 +6,7 @@ dotenv.config();
 const DEFAULT_FEES = [500, 3000, 10000];
 const DEFAULT_TOKENS_PATH = 'tokens/base.top.json';
 const DEFAULT_DEXES = ['uniswapv3', 'aerodrome'];
+const DEFAULT_FEE_CONFIG_PATH = 'config/fees.json';
 
 const getArgValue = (name: string): string | undefined => {
   const idx = process.argv.indexOf(`--${name}`);
@@ -49,7 +50,9 @@ export const parseConfig = (): ScanConfig => {
     timeBudgetMs: getNumArg('timeBudgetMs', 15_000),
     quoteConcurrency: getNumArg('quoteConcurrency', 6),
     selfTest: hasFlag('selfTest'),
+    debugHops: hasFlag('debugHops'),
     fees,
+    feeConfigPath: getArgValue('feeConfig') ?? DEFAULT_FEE_CONFIG_PATH,
     tokensPath: getArgValue('tokens') ?? DEFAULT_TOKENS_PATH,
     tokenSubset,
     dexes

@@ -1,8 +1,7 @@
 import { QuoteResult } from '../DexQuoter.js';
 import { Token } from '../../core/types.js';
 import { createUniV3Client } from './client.js';
-
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+import { bindUniV3Factory, getPoolAddress, hasPool } from './pools.js';
 
 const summarizeErr = (error: unknown): string => {
   const code = typeof error === 'object' && error && 'code' in error ? String((error as { code: unknown }).code) : 'ERR';
@@ -23,9 +22,12 @@ export class UniswapV3Quoter {
     return this.lastError;
   }
 
+  async getPoolAddress(tokenIn: Token, tokenOut: Token, fee: number): Promise<string> {
+    return getPoolAddress(tokenIn.address, tokenOut.address, fee);
+  }
+
   async hasPool(tokenIn: Token, tokenOut: Token, fee: number): Promise<boolean> {
-    const pool = await this.client.factory.getPool(tokenIn.address, tokenOut.address, fee);
-    return pool !== ZERO_ADDRESS;
+    return hasPool(tokenIn.address, tokenOut.address, fee);
   }
 
   async quoteWithFee(tokenIn: Token, tokenOut: Token, amountIn: bigint, fee: number): Promise<QuoteResult | null> {
@@ -34,8 +36,8 @@ export class UniswapV3Quoter {
       const [amountOut, , , gasEstimate] = await fn.staticCall({
         tokenIn: tokenIn.address,
         tokenOut: tokenOut.address,
-        fee,
         amountIn,
+        fee,
         sqrtPriceLimitX96: 0
       });
       this.lastError = '';
