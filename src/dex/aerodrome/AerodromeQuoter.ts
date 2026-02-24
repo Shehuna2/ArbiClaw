@@ -7,21 +7,35 @@ const AERODROME_FACTORY = '0x420DD381b31aEf6683db6B902084cB0FFECe40Da';
 const ROUTER_ABI = [
   'function getAmountsOut(uint256 amountIn, tuple(address from,address to,bool stable,address factory)[] routes) external view returns (uint256[] amounts)'
 ];
+const FACTORY_ABI = ['function getPool(address tokenA, address tokenB, bool stable) external view returns (address pool)'];
 
 interface CachedQuote {
   expiryMs: number;
   result: QuoteResult | null;
 }
 
+const summarizeErr = (error: unknown): string => {
+  const code = typeof error === 'object' && error && 'code' in error ? String((error as { code: unknown }).code) : 'ERR';
+  const msg = error instanceof Error ? error.message : String(error);
+  return `${code}: ${msg}`.slice(0, 180);
+};
+
 export class AerodromeQuoter {
   public readonly id = 'aerodrome';
   private readonly router: Contract;
+  private readonly factory: Contract;
   private readonly cache = new Map<string, CachedQuote>();
   private readonly ttlMs = 8_000;
+  private lastError = '';
 
   constructor(rpcUrl: string) {
     const provider = new JsonRpcProvider(rpcUrl);
     this.router = new Contract(AERODROME_ROUTER, ROUTER_ABI, provider);
+    this.factory = new Contract(AERODROME_FACTORY, FACTORY_ABI, provider);
+  }
+
+  getLastError(): string {
+    return this.lastError;
   }
 
   async quoteByMode(tokenIn: Token, tokenOut: Token, amountIn: bigint, stable: boolean): Promise<QuoteResult | null> {
@@ -31,19 +45,23 @@ export class AerodromeQuoter {
     if (hit && hit.expiryMs > now) return hit.result;
 
     try {
-      const amounts: bigint[] = await this.router.getAmountsOut(amountIn, [{
-        from: tokenIn.address,
-        to: tokenOut.address,
-        stable,
-        factory: AERODROME_FACTORY
-      }]);
+      const pool = await this.factory.getPool(tokenIn.address, tokenOut.address, stable);
+      if (pool === '0x0000000000000000000000000000000000000000') {
+        const result = null;
+        this.cache.set(key, { expiryMs: now + this.ttlMs, result });
+        this.lastError = 'NO_POOL: aerodrome pair not deployed for mode';
+        return result;
+      }
+
+      const routes = [[tokenIn.address, tokenOut.address, stable, AERODROME_FACTORY]];
+      const amounts: bigint[] = await this.router.getAmountsOut(amountIn, routes);
       const amountOut = amounts[amounts.length - 1];
-      const result = amountOut > 0n
-        ? { amountOut, gasUnitsEstimate: undefined, meta: { stable } }
-        : null;
+      const result = amountOut > 0n ? { amountOut, gasUnitsEstimate: undefined, meta: { stable } } : null;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result });
+      this.lastError = result ? '' : 'ZERO_OUT: aerodrome returned zero amount';
       return result;
-    } catch {
+    } catch (error) {
+      this.lastError = summarizeErr(error);
       this.cache.set(key, { expiryMs: now + this.ttlMs, result: null });
       return null;
     }

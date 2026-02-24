@@ -13,6 +13,8 @@ const getArgValue = (name: string): string | undefined => {
   return process.argv[idx + 1];
 };
 
+const hasFlag = (name: string): boolean => process.argv.includes(`--${name}`);
+
 const getNumArg = (name: string, fallback: number): number => {
   const raw = getArgValue(name);
   if (!raw) return fallback;
@@ -46,6 +48,7 @@ export const parseConfig = (): ScanConfig => {
     maxTotalQuotes: getNumArg('maxTotalQuotes', 4000),
     timeBudgetMs: getNumArg('timeBudgetMs', 15_000),
     quoteConcurrency: getNumArg('quoteConcurrency', 6),
+    selfTest: hasFlag('selfTest'),
     fees,
     tokensPath: getArgValue('tokens') ?? DEFAULT_TOKENS_PATH,
     tokenSubset,

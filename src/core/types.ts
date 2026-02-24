@@ -16,6 +16,7 @@ export interface ScanConfig {
   maxTotalQuotes: number;
   timeBudgetMs: number;
   quoteConcurrency: number;
+  selfTest: boolean;
   fees: number[];
   tokensPath: string;
   tokenSubset?: string[];
@@ -51,4 +52,7 @@ export interface SimStats {
   combosEnumerated: number;
   quoteErrorsOrSkips: number;
   quotesAttempted: number;
+  errorsByDex: Record<string, number>;
+  errorsByHop: Record<string, number>;
+  topErrorsByDex: Record<string, string[]>;
 }

@@ -22,6 +22,27 @@ interface SimulateOutput {
   stats: SimStats;
 }
 
+const pushTopError = (stats: SimStats, dexId: string, summary: string) => {
+  if (!summary) return;
+  if (!stats.topErrorsByDex[dexId]) stats.topErrorsByDex[dexId] = [];
+  if (!stats.topErrorsByDex[dexId].includes(summary) && stats.topErrorsByDex[dexId].length < 5) {
+    stats.topErrorsByDex[dexId].push(summary);
+  }
+};
+
+const markError = (stats: SimStats, dexId: string, hopKey: string, summary: string) => {
+  stats.quoteErrorsOrSkips += 1;
+  stats.errorsByDex[dexId] = (stats.errorsByDex[dexId] ?? 0) + 1;
+  stats.errorsByHop[hopKey] = (stats.errorsByHop[hopKey] ?? 0) + 1;
+  pushTopError(stats, dexId, summary);
+};
+
+const getLastDexError = (adapters: DexAdapters, dexId: string): string => {
+  if (dexId === 'uniswapv3') return adapters.uniswapv3?.getLastError() ?? 'quote failed';
+  if (dexId === 'aerodrome') return adapters.aerodrome?.getLastError() ?? 'quote failed';
+  return 'quote failed';
+};
+
 export const simulateTriangles = async (params: SimulateParams): Promise<SimulateOutput> => {
   const {
     adapters,
@@ -45,7 +66,10 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
     trianglesConsidered: 0,
     combosEnumerated: 0,
     quoteErrorsOrSkips: 0,
-    quotesAttempted: 0
+    quotesAttempted: 0,
+    errorsByDex: {},
+    errorsByHop: {},
+    topErrorsByDex: {}
   };
 
   const allResults = await runLimited(triangles, quoteConcurrency, async (triangle) => {
@@ -81,9 +105,7 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
             { dex: o3.dexId, tokenIn: c, tokenOut: a, label: o3.label }
           ];
 
-          const sim = await simulateCombo(triangle, hops, [o1, o2, o3], startAmount, gasPriceWei, ethToUsdcPrice);
-          stats.quotesAttempted += 3;
-          if (sim.failed) stats.quoteErrorsOrSkips += 1;
+          const sim = await simulateCombo(triangle, hops, [o1, o2, o3], startAmount, gasPriceWei, ethToUsdcPrice, adapters, stats);
           if (!sim.failed && sim.netProfit >= minProfit) results.push(sim);
         }
       }
@@ -101,14 +123,23 @@ const simulateCombo = async (
   options: HopOption[],
   startAmount: bigint,
   gasPriceWei: bigint,
-  ethToUsdcPrice: number
+  ethToUsdcPrice: number,
+  adapters: DexAdapters,
+  stats: SimStats
 ): Promise<SimResult> => {
   let amount = startAmount;
   let gasUnits = 0n;
 
-  for (const option of options) {
+  for (let i = 0; i < options.length; i += 1) {
+    const option = options[i];
+    const hop = hops[i];
+    stats.quotesAttempted += 1;
+
     const quote = await option.quote(amount);
     if (!quote || quote.amountOut <= 0n) {
+      const hopKey = `hop${i + 1}:${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`;
+      const summary = getLastDexError(adapters, option.dexId);
+      markError(stats, option.dexId, hopKey, summary);
       return {
         route: triangle,
         hops,
@@ -118,7 +149,7 @@ const simulateCombo = async (
         gasCostUsdc: 0n,
         netProfit: 0n,
         failed: true,
-        failReason: 'missing quote'
+        failReason: `${option.dexId} ${summary}`
       };
     }
     amount = quote.amountOut;
@@ -127,9 +158,7 @@ const simulateCombo = async (
 
   const gross = amount - startAmount;
   const gasWei = gasUnits * gasPriceWei;
-  const gasUsdc = ethToUsdcPrice > 0
-    ? toUnits((Number(gasWei) / 1e18) * ethToUsdcPrice, 6)
-    : 0n;
+  const gasUsdc = ethToUsdcPrice > 0 ? toUnits((Number(gasWei) / 1e18) * ethToUsdcPrice, 6) : 0n;
 
   return {
     route: triangle,
