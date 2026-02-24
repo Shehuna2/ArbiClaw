@@ -41,8 +41,11 @@ interface HopBuildParams {
   feePrefs: FeePrefs;
 }
 
+const isAeroPair = (tokenIn: Token, tokenOut: Token): boolean => tokenIn.symbol === 'AERO' || tokenOut.symbol === 'AERO';
+
 export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }: HopBuildParams): Promise<HopOptionsBuild> => {
-  const options: HopOption[] = [];
+  const uniOptions: HopOption[] = [];
+  const aeroOptions: HopOption[] = [];
   const uniPoolChecks: UniPoolCheck[] = [];
 
   if (adapters.uniswapv3) {
@@ -54,7 +57,7 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
         uniPoolChecks.push({ fee, poolAddress, hasPool: poolExists });
         if (!poolExists) continue;
 
-        options.push({
+        uniOptions.push({
           dexId: 'uniswapv3',
           label: `UNI:${fee}`,
           quote: async (amountIn: bigint) => {
@@ -69,17 +72,28 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
   }
 
   if (adapters.aerodrome) {
-    for (const stable of [false, true]) {
-      options.push({
+    aeroOptions.push({
+      dexId: 'aerodrome',
+      label: 'AERO:vol',
+      quote: async (amountIn: bigint) => {
+        const result = await adapters.aerodrome?.quoteByMode(tokenIn, tokenOut, amountIn, false);
+        return result ? { amountOut: result.amountOut, gasUnitsEstimate: result.gasUnitsEstimate } : null;
+      }
+    });
+
+    if (adapters.aerodrome.canUseStable(tokenIn, tokenOut)) {
+      aeroOptions.push({
         dexId: 'aerodrome',
-        label: `AERO:${stable ? 'stable' : 'vol'}`,
+        label: 'AERO:stable',
         quote: async (amountIn: bigint) => {
-          const result = await adapters.aerodrome?.quoteByMode(tokenIn, tokenOut, amountIn, stable);
+          const result = await adapters.aerodrome?.quoteByMode(tokenIn, tokenOut, amountIn, true);
           return result ? { amountOut: result.amountOut, gasUnitsEstimate: result.gasUnitsEstimate } : null;
         }
       });
     }
   }
+
+  const options = isAeroPair(tokenIn, tokenOut) ? [...aeroOptions, ...uniOptions] : [...uniOptions, ...aeroOptions];
 
   return {
     options,

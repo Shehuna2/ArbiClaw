@@ -1,4 +1,5 @@
 import { Contract, JsonRpcProvider } from 'ethers';
+import { StableConfig, isStableEligiblePair } from '../../config/stables.js';
 import { QuoteResult } from '../DexQuoter.js';
 import { Token } from '../../core/types.js';
 
@@ -8,6 +9,7 @@ const ROUTER_ABI = [
   'function getAmountsOut(uint256 amountIn, tuple(address from,address to,bool stable,address factory)[] routes) external view returns (uint256[] amounts)'
 ];
 const FACTORY_ABI = ['function getPool(address tokenA, address tokenB, bool stable) external view returns (address pool)'];
+const ZERO = '0x0000000000000000000000000000000000000000';
 
 interface CachedQuote {
   expiryMs: number;
@@ -28,7 +30,7 @@ export class AerodromeQuoter {
   private readonly ttlMs = 8_000;
   private lastError = '';
 
-  constructor(rpcUrl: string) {
+  constructor(rpcUrl: string, private readonly stableConfig: StableConfig) {
     const provider = new JsonRpcProvider(rpcUrl);
     this.router = new Contract(AERODROME_ROUTER, ROUTER_ABI, provider);
     this.factory = new Contract(AERODROME_FACTORY, FACTORY_ABI, provider);
@@ -38,7 +40,26 @@ export class AerodromeQuoter {
     return this.lastError;
   }
 
+  canUseStable(tokenIn: Token, tokenOut: Token): boolean {
+    return isStableEligiblePair(tokenIn, tokenOut, this.stableConfig);
+  }
+
+  async quotePreferred(tokenIn: Token, tokenOut: Token, amountIn: bigint): Promise<QuoteResult | null> {
+    const qVol = await this.quoteByMode(tokenIn, tokenOut, amountIn, false);
+    if (qVol) return qVol;
+    if (!this.canUseStable(tokenIn, tokenOut)) {
+      this.lastError = 'STABLE_SKIPPED: pair not stable-eligible';
+      return null;
+    }
+    return this.quoteByMode(tokenIn, tokenOut, amountIn, true);
+  }
+
   async quoteByMode(tokenIn: Token, tokenOut: Token, amountIn: bigint, stable: boolean): Promise<QuoteResult | null> {
+    if (stable && !this.canUseStable(tokenIn, tokenOut)) {
+      this.lastError = 'STABLE_SKIPPED: pair not stable-eligible';
+      return null;
+    }
+
     const key = `${tokenIn.address}:${tokenOut.address}:${amountIn.toString()}:${stable ? 's' : 'v'}`;
     const now = Date.now();
     const hit = this.cache.get(key);
@@ -46,10 +67,10 @@ export class AerodromeQuoter {
 
     try {
       const pool = await this.factory.getPool(tokenIn.address, tokenOut.address, stable);
-      if (pool === '0x0000000000000000000000000000000000000000') {
+      if (pool === ZERO) {
         const result = null;
         this.cache.set(key, { expiryMs: now + this.ttlMs, result });
-        this.lastError = 'NO_POOL: aerodrome pair not deployed for mode';
+        this.lastError = stable ? 'STABLE_SKIPPED: no pool' : 'NO_POOL: aerodrome volatile pair not deployed';
         return result;
       }
 
@@ -61,7 +82,8 @@ export class AerodromeQuoter {
       this.lastError = result ? '' : 'ZERO_OUT: aerodrome returned zero amount';
       return result;
     } catch (error) {
-      this.lastError = summarizeErr(error);
+      const summary = summarizeErr(error);
+      this.lastError = stable ? `STABLE_REVERT_EXPECTED: ${summary}` : summary;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result: null });
       return null;
     }

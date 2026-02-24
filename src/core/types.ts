@@ -20,6 +20,7 @@ export interface ScanConfig {
   debugHops: boolean;
   fees: number[];
   feeConfigPath?: string;
+  aeroStablePairsPath?: string;
   tokensPath: string;
   tokenSubset?: string[];
   dexes: string[];
@@ -55,6 +56,15 @@ export interface SimStats {
   trianglesSkippedNoHopOptions: number;
   quoteAttempts: number;
   quoteFailures: number;
+  hop1OptionsAvg: number;
+  hop2OptionsAvg: number;
+  hop3OptionsAvg: number;
+  hop1OptionsMin: number;
+  hop2OptionsMin: number;
+  hop3OptionsMin: number;
+  hop1OptionsMax: number;
+  hop2OptionsMax: number;
+  hop3OptionsMax: number;
   errorsByDex: Record<string, number>;
   errorsByHop: Record<string, number>;
   topErrorsByDex: Record<string, string[]>;

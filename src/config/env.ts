@@ -7,6 +7,7 @@ const DEFAULT_FEES = [500, 3000, 10000];
 const DEFAULT_TOKENS_PATH = 'tokens/base.top.json';
 const DEFAULT_DEXES = ['uniswapv3', 'aerodrome'];
 const DEFAULT_FEE_CONFIG_PATH = 'config/fees.json';
+const DEFAULT_AERO_STABLE_PAIRS_PATH = 'config/aerodrome.stablePairs.json';
 
 const getArgValue = (name: string): string | undefined => {
   const idx = process.argv.indexOf(`--${name}`);
@@ -53,6 +54,7 @@ export const parseConfig = (): ScanConfig => {
     debugHops: hasFlag('debugHops'),
     fees,
     feeConfigPath: getArgValue('feeConfig') ?? DEFAULT_FEE_CONFIG_PATH,
+    aeroStablePairsPath: getArgValue('aeroStablePairs') ?? DEFAULT_AERO_STABLE_PAIRS_PATH,
     tokensPath: getArgValue('tokens') ?? DEFAULT_TOKENS_PATH,
     tokenSubset,
     dexes

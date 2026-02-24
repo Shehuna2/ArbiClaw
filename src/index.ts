@@ -1,9 +1,10 @@
 import { JsonRpcProvider } from 'ethers';
 import { parseConfig } from './config/env.js';
 import { loadFeePrefs } from './config/fees.js';
+import { buildStableConfig, loadStablePairOverrides } from './config/stables.js';
 import { START_SYMBOL } from './config/tokens.js';
 import { loadTokens } from './config/loadTokens.js';
-import { Token, RouteCandidate } from './core/types.js';
+import { Token, RouteCandidate, SimStats } from './core/types.js';
 import { cmpBigintDesc, formatFixed, toUnits } from './core/math.js';
 import { log } from './core/log.js';
 import { AerodromeQuoter } from './dex/aerodrome/AerodromeQuoter.js';
@@ -42,10 +43,16 @@ const runSelfTest = async (
   }
 
   if (adapters.aerodrome) {
-    for (const stable of [false, true]) {
-      const q = await adapters.aerodrome.quoteByMode(usdc, weth, amountIn, stable);
-      console.log(JSON.stringify({ dex: 'aerodrome', pair: 'USDC/WETH', mode: stable ? 'stable' : 'volatile', ok: !!q, amountOut: q?.amountOut.toString(), err: q ? undefined : adapters.aerodrome.getLastError() }));
-      if (q) success += 1;
+    const qVol = await adapters.aerodrome.quoteByMode(usdc, weth, amountIn, false);
+    console.log(JSON.stringify({ dex: 'aerodrome', pair: 'USDC/WETH', mode: 'volatile', ok: !!qVol, amountOut: qVol?.amountOut.toString(), err: qVol ? undefined : adapters.aerodrome.getLastError() }));
+    if (qVol) success += 1;
+
+    if (adapters.aerodrome.canUseStable(usdc, weth)) {
+      const qStable = await adapters.aerodrome.quoteByMode(usdc, weth, amountIn, true);
+      console.log(JSON.stringify({ dex: 'aerodrome', pair: 'USDC/WETH', mode: 'stable', ok: !!qStable, amountOut: qStable?.amountOut.toString(), err: qStable ? undefined : adapters.aerodrome.getLastError() }));
+      if (qStable) success += 1;
+    } else {
+      console.log(JSON.stringify({ dex: 'aerodrome', pair: 'USDC/WETH', mode: 'stable', ok: false, skipped: true, err: 'STABLE_SKIPPED: pair not stable-eligible' }));
     }
   }
 
@@ -91,18 +98,41 @@ const filterTrianglesWithHopOptions = async (
   return filtered;
 };
 
+const emptyStats = (trianglesSkippedNoHopOptions: number): SimStats => ({
+  trianglesConsidered: 0,
+  combosEnumerated: 0,
+  trianglesSkippedNoHopOptions,
+  quoteAttempts: 0,
+  quoteFailures: 0,
+  hop1OptionsAvg: 0,
+  hop2OptionsAvg: 0,
+  hop3OptionsAvg: 0,
+  hop1OptionsMin: 0,
+  hop2OptionsMin: 0,
+  hop3OptionsMin: 0,
+  hop1OptionsMax: 0,
+  hop2OptionsMax: 0,
+  hop3OptionsMax: 0,
+  errorsByDex: {},
+  errorsByHop: {},
+  topErrorsByDex: {}
+});
+
 const main = async () => {
   const cfg = parseConfig();
   const feePrefs = await loadFeePrefs(cfg.feeConfigPath);
   const allTokens = await loadTokens(cfg.tokensPath);
   const selectedTokens = applySubset(allTokens, cfg.tokenSubset);
+  const stablePairOverrides = await loadStablePairOverrides(cfg.aeroStablePairsPath);
+  const stableConfig = buildStableConfig(selectedTokens, stablePairOverrides);
+
   const startToken = selectedTokens.find((token) => token.symbol === START_SYMBOL);
   if (!startToken) throw new Error(`Token registry must include ${START_SYMBOL}`);
 
   const adapters: { uniswapv3?: UniswapV3Quoter; aerodrome?: AerodromeQuoter } = {};
   for (const dex of cfg.dexes) {
     if (dex === 'uniswapv3') adapters.uniswapv3 = new UniswapV3Quoter(cfg.rpcUrl, cfg.fees);
-    if (dex === 'aerodrome') adapters.aerodrome = new AerodromeQuoter(cfg.rpcUrl);
+    if (dex === 'aerodrome') adapters.aerodrome = new AerodromeQuoter(cfg.rpcUrl, stableConfig);
   }
 
   const enabledDexes = Object.keys(adapters).sort();
@@ -133,6 +163,7 @@ const main = async () => {
     debugHops: cfg.debugHops,
     fees: cfg.fees,
     feeConfigPath: cfg.feeConfigPath,
+    aeroStablePairsPath: cfg.aeroStablePairsPath,
     tokensPath: cfg.tokensPath,
     selectedTokens: selectedTokens.map((t) => t.symbol).sort(),
     dexes: enabledDexes,
@@ -143,7 +174,7 @@ const main = async () => {
 
   if (!triangles.length) {
     log.warn('No triangles generated after hop-option filtering.');
-    log.info('stats', { trianglesConsidered: 0, combosEnumerated: 0, trianglesSkippedNoHopOptions, quoteAttempts: 0, quoteFailures: 0, errorsByDex: {}, errorsByHop: {}, topErrorsByDex: {} });
+    log.info('stats', { ...emptyStats(trianglesSkippedNoHopOptions) });
     return;
   }
 

@@ -34,7 +34,8 @@ const pushTopError = (stats: SimStats, dexId: string, summary: string) => {
   }
 };
 
-const markError = (stats: SimStats, dexId: string, hopKey: string, summary: string) => {
+const markError = (stats: SimStats, dexId: string, hopKey: string, summary: string, debugHops: boolean) => {
+  if (dexId === 'aerodrome' && summary.startsWith('STABLE_REVERT_EXPECTED') && !debugHops) return;
   stats.quoteFailures += 1;
   stats.errorsByDex[dexId] = (stats.errorsByDex[dexId] ?? 0) + 1;
   stats.errorsByHop[hopKey] = (stats.errorsByHop[hopKey] ?? 0) + 1;
@@ -87,18 +88,53 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
     trianglesSkippedNoHopOptions: 0,
     quoteAttempts: 0,
     quoteFailures: 0,
+    hop1OptionsAvg: 0,
+    hop2OptionsAvg: 0,
+    hop3OptionsAvg: 0,
+    hop1OptionsMin: 0,
+    hop2OptionsMin: 0,
+    hop3OptionsMin: 0,
+    hop1OptionsMax: 0,
+    hop2OptionsMax: 0,
+    hop3OptionsMax: 0,
     errorsByDex: {},
     errorsByHop: {},
     topErrorsByDex: {}
   };
 
   let loggedQuoteFailures = 0;
+  let hop1Total = 0;
+  let hop2Total = 0;
+  let hop3Total = 0;
+  let optionsSamples = 0;
 
   const allResults = await runLimited(triangles, quoteConcurrency, async (triangle) => {
     if (Date.now() > deadline || stats.quoteAttempts >= maxTotalQuotes) return [] as SimResult[];
     stats.trianglesConsidered += 1;
 
     const [hop1, hop2, hop3] = await getTriangleHopOptions(triangle, adapters, feePrefs);
+
+    hop1Total += hop1.options.length;
+    hop2Total += hop2.options.length;
+    hop3Total += hop3.options.length;
+    optionsSamples += 1;
+
+    if (optionsSamples === 1) {
+      stats.hop1OptionsMin = hop1.options.length;
+      stats.hop2OptionsMin = hop2.options.length;
+      stats.hop3OptionsMin = hop3.options.length;
+      stats.hop1OptionsMax = hop1.options.length;
+      stats.hop2OptionsMax = hop2.options.length;
+      stats.hop3OptionsMax = hop3.options.length;
+    } else {
+      stats.hop1OptionsMin = Math.min(stats.hop1OptionsMin, hop1.options.length);
+      stats.hop2OptionsMin = Math.min(stats.hop2OptionsMin, hop2.options.length);
+      stats.hop3OptionsMin = Math.min(stats.hop3OptionsMin, hop3.options.length);
+      stats.hop1OptionsMax = Math.max(stats.hop1OptionsMax, hop1.options.length);
+      stats.hop2OptionsMax = Math.max(stats.hop2OptionsMax, hop2.options.length);
+      stats.hop3OptionsMax = Math.max(stats.hop3OptionsMax, hop3.options.length);
+    }
+
     if (!hop1.options.length || !hop2.options.length || !hop3.options.length) {
       stats.trianglesSkippedNoHopOptions += 1;
       return [] as SimResult[];
@@ -120,7 +156,7 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
             { dex: o3.dexId, tokenIn: c, tokenOut: a, label: o3.label }
           ];
 
-          const sim = await simulateCombo(triangle, hops, [o1, o2, o3], startAmount, gasPriceWei, ethToUsdcPrice, adapters, stats);
+          const sim = await simulateCombo(triangle, hops, [o1, o2, o3], startAmount, gasPriceWei, ethToUsdcPrice, adapters, stats, debugHops);
           if (debugHops && sim.failed && loggedQuoteFailures < 5) {
             log.warn('quote-failure', { triangle: triangle.id, failReason: sim.failReason, hops: hops.map((h) => h.label) });
             loggedQuoteFailures += 1;
@@ -133,6 +169,12 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
     return results;
   });
 
+  if (optionsSamples > 0) {
+    stats.hop1OptionsAvg = hop1Total / optionsSamples;
+    stats.hop2OptionsAvg = hop2Total / optionsSamples;
+    stats.hop3OptionsAvg = hop3Total / optionsSamples;
+  }
+
   return { results: allResults.flat(), stats };
 };
 
@@ -144,7 +186,8 @@ const simulateCombo = async (
   gasPriceWei: bigint,
   ethToUsdcPrice: number,
   adapters: DexAdapters,
-  stats: SimStats
+  stats: SimStats,
+  debugHops: boolean
 ): Promise<SimResult> => {
   let amount = startAmount;
   let gasUnits = 0n;
@@ -158,7 +201,7 @@ const simulateCombo = async (
     if (!quote || quote.amountOut <= 0n) {
       const hopKey = `hop${i + 1}:${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`;
       const summary = getLastDexError(adapters, option.dexId);
-      markError(stats, option.dexId, hopKey, summary);
+      markError(stats, option.dexId, hopKey, summary, debugHops);
       return {
         route: triangle,
         hops,
@@ -201,9 +244,11 @@ export const deriveEthToUsdcPrice = async (adapters: DexAdapters, usdc: Token, w
     }
   }
   if (adapters.aerodrome) {
-    for (const stable of [false, true]) {
-      const q = await adapters.aerodrome.quoteByMode(weth, usdc, amountIn, stable);
-      if (q && q.amountOut > 0n) return fromUnits(q.amountOut, usdc.decimals);
+    const qVol = await adapters.aerodrome.quoteByMode(weth, usdc, amountIn, false);
+    if (qVol && qVol.amountOut > 0n) return fromUnits(qVol.amountOut, usdc.decimals);
+    if (adapters.aerodrome.canUseStable(weth, usdc)) {
+      const qStable = await adapters.aerodrome.quoteByMode(weth, usdc, amountIn, true);
+      if (qStable && qStable.amountOut > 0n) return fromUnits(qStable.amountOut, usdc.decimals);
     }
   }
   return 0;

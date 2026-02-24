@@ -13,6 +13,11 @@ Default (uses repo defaults: uniswapv3+aerodrome, maxCombosPerTriangle=300, time
 npm run dev -- --amount 100 --minProfit 0 --top 10
 ```
 
+Requested mixed-DEX run:
+```bash
+npm run dev -- --dexes uniswapv3,aerodrome --tokenSubset USDC,WETH,AERO --amount 100 --minProfit 0 --top 10
+```
+
 With explicit fee preferences and hop debugging:
 ```bash
 npm run dev -- --dexes uniswapv3,aerodrome --tokenSubset USDC,WETH,AERO --feeConfig config/fees.json --debugHops
@@ -24,12 +29,13 @@ Run quoting checks without triangle scanning:
 npm run dev -- --selfTest
 ```
 
-Each line is JSON pass/fail per DEX/pair so you can quickly validate quoting before a full scan.
+For Aerodrome, volatile is always checked first; stable is skipped for non-stable-eligible pairs unless explicitly allowed.
 
 ## Key flags
 - `--dexes <csv>` default `uniswapv3,aerodrome`
 - `--fees <csv>` default `500,3000,10000` (fallback Uniswap fee tiers)
 - `--feeConfig <path>` default `config/fees.json` (pair fee-tier preferences; symmetric lookup)
+- `--aeroStablePairs <path>` default `config/aerodrome.stablePairs.json` (force stable-eligible Aerodrome pairs)
 - `--tokenSubset <csv>` must include `USDC`
 - `--maxTriangles <n>` cap triangle candidates
 - `--maxCombosPerTriangle <n>` default `300`
@@ -47,12 +53,12 @@ Stats include:
 - triangles considered
 - triangles skipped due to no hop options
 - combos enumerated
-- quote attempts
-- quote failures
+- quote attempts / quote failures
+- hop options distribution: avg/min/max per hop
 - errorsByDex, errorsByHop, topErrorsByDex
 
 ## Notes
 - Simulation-only (no execution path / no trades).
 - Uniswap v3 uses QuoterV2 struct ABI static calls.
 - Pair-specific fee preferences are loaded from `config/fees.json`.
-- AERO hops are Aerodrome-first capable because Aerodrome options are always included when enabled.
+- AERO hops are Aerodrome-first in ordering only; Uniswap options are still enumerated when pools exist.
