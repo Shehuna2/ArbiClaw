@@ -77,7 +77,7 @@ const runSelfTest = async (
   }
 
   if (adapters.aerodrome) {
-    const qVol = await adapters.aerodrome.quoteByMode(usdc, weth, amountIn, false);
+    const qVol = await adapters.aerodrome.quoteExactIn({ tokenIn: usdc, tokenOut: weth, amountIn });
     console.log(JSON.stringify({ dex: 'aerodrome', pair: 'USDC/WETH', mode: 'volatile', ok: !!qVol, amountOut: qVol?.amountOut.toString(), err: qVol ? undefined : adapters.aerodrome.getLastError() }));
     if (qVol) {
       success += 1;

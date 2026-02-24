@@ -1,6 +1,6 @@
 import { Contract, JsonRpcProvider } from 'ethers';
 import { StableConfig, isStableEligiblePair } from '../../config/stables.js';
-import { QuoteResult } from '../DexQuoter.js';
+import { QuoteParams, QuoteResult } from '../DexQuoter.js';
 import { Token } from '../../core/types.js';
 import { log } from '../../core/log.js';
 
@@ -38,8 +38,10 @@ export class AerodromeQuoter {
     this.factory = new Contract(AERODROME_FACTORY, FACTORY_ABI, provider);
   }
 
-  getLastError(): string {
-    return this.lastError;
+  getLastError(includeSelector = false): string {
+    if (!includeSelector) return this.lastError;
+    const selector = this.router.interface.getFunction('getAmountsOut')?.selector ?? 'unknown';
+    return `[selector:${selector}] ${this.lastError}`.trim();
   }
 
   canUseStable(tokenIn: Token, tokenOut: Token): boolean {
@@ -53,6 +55,9 @@ export class AerodromeQuoter {
     if (!process.argv.includes('--debugHops') && !process.argv.includes('--selfTest')) return;
 
     const selector = this.router.interface.getFunction('getAmountsOut')?.selector ?? 'unknown';
+    if (selector !== '0x5509a1ac') {
+      throw new Error(`Aerodrome selector mismatch: expected 0x5509a1ac, got ${selector}`);
+    }
     log.info('aerodrome-selector', { selector, expectedSelector: '0x5509a1ac' });
     this.selectorLogged = true;
   }
@@ -62,8 +67,13 @@ export class AerodromeQuoter {
     return this.router.interface.encodeFunctionData('getAmountsOut', [amountIn, routes]);
   }
 
+
+  async quoteExactIn(params: QuoteParams): Promise<QuoteResult | null> {
+    return this.quoteByMode(params.tokenIn, params.tokenOut, params.amountIn, false);
+  }
+
   async quotePreferred(tokenIn: Token, tokenOut: Token, amountIn: bigint): Promise<QuoteResult | null> {
-    const qVol = await this.quoteByMode(tokenIn, tokenOut, amountIn, false);
+    const qVol = await this.quoteExactIn({ tokenIn, tokenOut, amountIn });
     if (qVol) return qVol;
     if (!this.canUseStable(tokenIn, tokenOut)) {
       this.lastError = 'STABLE_SKIPPED: pair not stable-eligible';

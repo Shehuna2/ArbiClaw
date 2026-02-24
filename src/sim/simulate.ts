@@ -42,9 +42,9 @@ const markError = (stats: SimStats, dexId: string, hopKey: string, summary: stri
   pushTopError(stats, dexId, summary);
 };
 
-const getLastDexError = (adapters: DexAdapters, dexId: string): string => {
+const getLastDexError = (adapters: DexAdapters, dexId: string, debugHops: boolean): string => {
   if (dexId === 'uniswapv3') return adapters.uniswapv3?.getLastError() ?? 'quote failed';
-  if (dexId === 'aerodrome') return adapters.aerodrome?.getLastError() ?? 'quote failed';
+  if (dexId === 'aerodrome') return adapters.aerodrome?.getLastError(debugHops) ?? 'quote failed';
   return 'quote failed';
 };
 
@@ -246,7 +246,7 @@ const simulateCombo = async (
 
     if (!quote || quote.amountOut <= 0n) {
       const hopKey = `hop${i + 1}:${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`;
-      const summary = getLastDexError(adapters, option.dexId);
+      const summary = getLastDexError(adapters, option.dexId, debugHops);
       markError(stats, option.dexId, hopKey, summary, debugHops);
       return {
         route: triangle,
@@ -292,7 +292,7 @@ export const deriveEthToUsdcPrice = async (adapters: DexAdapters, usdc: Token, w
     }
   }
   if (adapters.aerodrome) {
-    const qVol = await adapters.aerodrome.quoteByMode(weth, usdc, amountIn, false);
+    const qVol = await adapters.aerodrome.quoteExactIn({ tokenIn: weth, tokenOut: usdc, amountIn });
     if (qVol && qVol.amountOut > 0n) return fromUnits(qVol.amountOut, usdc.decimals);
     if (adapters.aerodrome.canUseStable(weth, usdc)) {
       const qStable = await adapters.aerodrome.quoteByMode(weth, usdc, amountIn, true);
