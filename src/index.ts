@@ -23,6 +23,31 @@ const applySubset = (tokens: Token[], subset?: string[]): Token[] => {
   return tokens.filter((t) => symbolSet.has(t.symbol.toUpperCase()));
 };
 
+
+const assertAerodromeCalldataEncoding = (adapters: { aerodrome?: AerodromeQuoter }, usdc: Token, weth: Token, debugHops: boolean, selfTest: boolean): boolean => {
+  if (!adapters.aerodrome || (!debugHops && !selfTest)) return true;
+  const amountIn = toUnits('100', usdc.decimals);
+  const calldata = adapters.aerodrome.encodeGetAmountsOutCalldata(usdc.address, weth.address, amountIn, false);
+  const selector = calldata.slice(0, 10);
+  const firstWord = calldata.slice(10, 74);
+  const first20Bytes = calldata.slice(0, 42);
+  const expectedAmountWord = amountIn.toString(16).padStart(64, '0');
+
+  log.info('aerodrome-calldata-check', {
+    pair: 'USDC/WETH',
+    selector,
+    first20Bytes,
+    firstWordPrefix: firstWord.slice(0, 16)
+  });
+
+  if (firstWord !== expectedAmountWord) {
+    log.error('aerodrome-calldata-invalid', { expectedAmountWordPrefix: expectedAmountWord.slice(0, 16), gotPrefix: firstWord.slice(0, 16) });
+    return false;
+  }
+
+  return true;
+};
+
 const runSelfTest = async (
   adapters: { uniswapv3?: UniswapV3Quoter; aerodrome?: AerodromeQuoter },
   selectedTokens: Token[]
@@ -31,21 +56,31 @@ const runSelfTest = async (
   const weth = selectedTokens.find((t) => t.symbol === 'WETH');
   if (!usdc || !weth) throw new Error('Self-test requires USDC and WETH in token set.');
 
-  const amountIn = toUnits(100, usdc.decimals);
+  if (!assertAerodromeCalldataEncoding(adapters, usdc, weth, false, true)) return false;
+
+  const amountIn = toUnits('100', usdc.decimals);
   let success = 0;
+  let uniUsdcWethOk = false;
+  let aeroVolUsdcWethOk = false;
 
   if (adapters.uniswapv3) {
     for (const fee of [500, 3000, 10000]) {
       const q = await adapters.uniswapv3.quoteWithFee(usdc, weth, amountIn, fee);
       console.log(JSON.stringify({ dex: 'uniswapv3', pair: 'USDC/WETH', mode: `fee:${fee}`, ok: !!q, amountOut: q?.amountOut.toString(), err: q ? undefined : adapters.uniswapv3.getLastError() }));
-      if (q) success += 1;
+      if (q) {
+        success += 1;
+        uniUsdcWethOk = true;
+      }
     }
   }
 
   if (adapters.aerodrome) {
     const qVol = await adapters.aerodrome.quoteByMode(usdc, weth, amountIn, false);
     console.log(JSON.stringify({ dex: 'aerodrome', pair: 'USDC/WETH', mode: 'volatile', ok: !!qVol, amountOut: qVol?.amountOut.toString(), err: qVol ? undefined : adapters.aerodrome.getLastError() }));
-    if (qVol) success += 1;
+    if (qVol) {
+      success += 1;
+      aeroVolUsdcWethOk = true;
+    }
 
     if (adapters.aerodrome.canUseStable(usdc, weth)) {
       const qStable = await adapters.aerodrome.quoteByMode(usdc, weth, amountIn, true);
@@ -56,8 +91,30 @@ const runSelfTest = async (
     }
   }
 
+  if (!aeroVolUsdcWethOk && adapters.aerodrome) {
+    console.error('Self-test failed: aerodrome volatile USDC->WETH quote failed.');
+    return false;
+  }
+
+  if (!uniUsdcWethOk && adapters.uniswapv3) {
+    console.error('Self-test failed: uniswapv3 USDC->WETH quote failed for all fee tiers.');
+    return false;
+  }
+
+  if (!uniUsdcWethOk && !aeroVolUsdcWethOk) {
+    console.error('Self-test failed: both uniswapv3 and aerodrome volatile USDC->WETH quotes failed.');
+    return false;
+  }
+
   return success > 0;
 };
+
+const summarizeHopDebug = (hop: Awaited<ReturnType<typeof getTriangleHopOptions>>[number]) => ({
+  pair: `${hop.debug.tokenIn}->${hop.debug.tokenOut}`,
+  optionCount: hop.options.length,
+  dexCounts: hop.debug.dexCounts,
+  optionLabelsSample: hop.debug.optionLabels.slice(0, 8)
+});
 
 const filterTrianglesWithHopOptions = async (
   triangles: RouteCandidate[],
@@ -70,6 +127,15 @@ const filterTrianglesWithHopOptions = async (
 
   for (const triangle of triangles) {
     const [hop1, hop2, hop3] = await getTriangleHopOptions(triangle, adapters, feePrefs);
+
+    if (debugHops && logged < 10) {
+      log.info('hop-options', {
+        route: triangle.id,
+        hops: [summarizeHopDebug(hop1), summarizeHopDebug(hop2), summarizeHopDebug(hop3)]
+      });
+      logged += 1;
+    }
+
     const missing: string[] = [];
     if (hop1.options.length === 0) missing.push('hop1');
     if (hop2.options.length === 0) missing.push('hop2');
@@ -138,6 +204,12 @@ const main = async () => {
   const enabledDexes = Object.keys(adapters).sort();
   if (!enabledDexes.length) throw new Error('No supported dexes enabled.');
 
+  const usdc = selectedTokens.find((t) => t.symbol === 'USDC');
+  const weth = selectedTokens.find((t) => t.symbol === 'WETH');
+  if (usdc && weth && !assertAerodromeCalldataEncoding(adapters, usdc, weth, cfg.debugHops, false)) {
+    process.exit(1);
+  }
+
   if (cfg.selfTest) {
     const ok = await runSelfTest(adapters, selectedTokens);
     if (!ok) process.exit(1);
@@ -182,8 +254,6 @@ const main = async () => {
   const feeData = await provider.getFeeData();
   const gasPriceWei = feeData.gasPrice ?? feeData.maxFeePerGas ?? 1_000_000_000n;
 
-  const usdc = selectedTokens.find((t) => t.symbol === 'USDC');
-  const weth = selectedTokens.find((t) => t.symbol === 'WETH');
   const ethToUsdcPrice = usdc && weth ? await deriveEthToUsdcPrice(adapters, usdc, weth) : 0;
 
   const { results, stats } = await simulateTriangles({

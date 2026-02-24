@@ -25,6 +25,12 @@ const getNumArg = (name: string, fallback: number): number => {
   return value;
 };
 
+const getDecimalArg = (name: string, fallback: string): string => {
+  const raw = getArgValue(name);
+  if (!raw) return fallback;
+  return raw.trim();
+};
+
 export const parseConfig = (): ScanConfig => {
   const rpcUrl = getArgValue('rpc') ?? process.env.BASE_RPC_URL;
   if (!rpcUrl) throw new Error('Missing RPC URL. Pass --rpc or set BASE_RPC_URL.');
@@ -42,8 +48,8 @@ export const parseConfig = (): ScanConfig => {
 
   return {
     rpcUrl,
-    amountInHuman: getNumArg('amount', 100),
-    minProfitHuman: getNumArg('minProfit', 0),
+    amountInHuman: getDecimalArg('amount', '100'),
+    minProfitHuman: getDecimalArg('minProfit', '0'),
     topN: getNumArg('top', 20),
     maxTriangles: getNumArg('maxTriangles', 200),
     maxCombosPerTriangle: getNumArg('maxCombosPerTriangle', 300),
