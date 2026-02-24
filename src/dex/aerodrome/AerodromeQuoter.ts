@@ -7,8 +7,9 @@ import { log } from '../../core/log.js';
 const AERODROME_ROUTER = '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43';
 const AERODROME_FACTORY = '0x420DD381b31aEf6683db6B902084cB0FFECe40Da';
 const ROUTER_ABI = [
-  'function getAmountsOut(uint256 amountIn, tuple(address from,address to,bool stable,address factory)[] routes) external view returns (uint256[] amounts)'
+  'function getAmountsOut(uint256 amountIn, tuple(address from,address to,bool stable,address factory)[] routes) view returns (uint256[] amounts)'
 ];
+const GET_AMOUNTS_OUT_FN = 'getAmountsOut(uint256,(address,address,bool,address)[])';
 const FACTORY_ABI = ['function getPool(address tokenA, address tokenB, bool stable) external view returns (address pool)'];
 const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -37,7 +38,7 @@ export class AerodromeQuoter {
     this.router = new Contract(AERODROME_ROUTER, ROUTER_ABI, provider);
     this.factory = new Contract(AERODROME_FACTORY, FACTORY_ABI, provider);
 
-    const selector = this.router.interface.getFunction('getAmountsOut')?.selector ?? 'unknown';
+    const selector = this.router.interface.getFunction(GET_AMOUNTS_OUT_FN)?.selector ?? 'unknown';
     if (selector !== '0x5509a1ac') {
       throw new Error(`Aerodrome ABI mismatch: expected selector 0x5509a1ac, got ${selector}`);
     }
@@ -45,7 +46,7 @@ export class AerodromeQuoter {
 
   getLastError(includeSelector = false): string {
     if (!includeSelector) return this.lastError;
-    const selector = this.router.interface.getFunction('getAmountsOut')?.selector ?? 'unknown';
+    const selector = this.router.interface.getFunction(GET_AMOUNTS_OUT_FN)?.selector ?? 'unknown';
     return `[selector:${selector}] ${this.lastError}`.trim();
   }
 
@@ -53,13 +54,11 @@ export class AerodromeQuoter {
     return isStableEligiblePair(tokenIn, tokenOut, this.stableConfig);
   }
 
-
-
   private maybeLogSelectorInvariant(): void {
     if (this.selectorLogged) return;
     if (!process.argv.includes('--debugHops') && !process.argv.includes('--selfTest')) return;
 
-    const selector = this.router.interface.getFunction('getAmountsOut')?.selector ?? 'unknown';
+    const selector = this.router.interface.getFunction(GET_AMOUNTS_OUT_FN)?.selector ?? 'unknown';
     if (selector !== '0x5509a1ac') {
       throw new Error(`Aerodrome selector mismatch: expected 0x5509a1ac, got ${selector}`);
     }
@@ -69,20 +68,25 @@ export class AerodromeQuoter {
 
   encodeGetAmountsOutCalldata(tokenIn: string, tokenOut: string, amountIn: bigint, stable: boolean): string {
     const routes: [string, string, boolean, string][] = [[tokenIn, tokenOut, stable, AERODROME_FACTORY]];
-    return this.router.interface.encodeFunctionData('getAmountsOut', [amountIn, routes]);
+    return this.router.interface.encodeFunctionData(GET_AMOUNTS_OUT_FN, [amountIn, routes]);
   }
 
-
   async quoteExactIn(params: QuoteParams, callsite = 'unknown'): Promise<QuoteResult | null> {
-    if (process.argv.includes('--debugHops') || process.argv.includes('--selfTest')) {
-      const selector = this.router.interface.getFunction('getAmountsOut')?.selector ?? 'unknown';
-      const calldata = this.encodeGetAmountsOutCalldata(params.tokenIn.address, params.tokenOut.address, params.amountIn, false);
+    if (process.argv.includes('--debugHops')) {
+      const selector = this.router.interface.getFunction(GET_AMOUNTS_OUT_FN)?.selector ?? 'unknown';
+      const routes: [string, string, boolean, string][] = [[params.tokenIn.address, params.tokenOut.address, false, AERODROME_FACTORY]];
+      const calldata = this.router.interface.encodeFunctionData(GET_AMOUNTS_OUT_FN, [params.amountIn, routes]);
+      const calldataSelector = calldata.slice(0, 10);
+      if (calldataSelector !== '0x5509a1ac') {
+        throw new Error(`Aerodrome selector drift detected: ${calldataSelector} callsite=${callsite}`);
+      }
       log.info('aerodrome-quoteexactin-calldata', {
         callsite,
         selector,
         first10Bytes: calldata.slice(0, 22)
       });
     }
+
     return this.quoteByMode(params.tokenIn, params.tokenOut, params.amountIn, false);
   }
 
@@ -118,7 +122,7 @@ export class AerodromeQuoter {
       }
 
       const routes: [string, string, boolean, string][] = [[tokenIn.address, tokenOut.address, stable, AERODROME_FACTORY]];
-      const amounts: bigint[] = await this.router.getFunction('getAmountsOut').staticCall(amountIn, routes);
+      const amounts: bigint[] = await this.router.getFunction(GET_AMOUNTS_OUT_FN).staticCall(amountIn, routes);
       const amountOut = amounts[amounts.length - 1];
       const result = amountOut > 0n ? { amountOut, gasUnitsEstimate: undefined, meta: { stable } } : null;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result });
