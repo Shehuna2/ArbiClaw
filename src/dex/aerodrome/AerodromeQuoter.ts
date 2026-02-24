@@ -44,6 +44,12 @@ export class AerodromeQuoter {
     return isStableEligiblePair(tokenIn, tokenOut, this.stableConfig);
   }
 
+
+  encodeGetAmountsOutCalldata(tokenIn: string, tokenOut: string, amountIn: bigint, stable: boolean): string {
+    const routes: [string, string, boolean, string][] = [[tokenIn, tokenOut, stable, AERODROME_FACTORY]];
+    return this.router.interface.encodeFunctionData('getAmountsOut', [amountIn, routes]);
+  }
+
   async quotePreferred(tokenIn: Token, tokenOut: Token, amountIn: bigint): Promise<QuoteResult | null> {
     const qVol = await this.quoteByMode(tokenIn, tokenOut, amountIn, false);
     if (qVol) return qVol;
@@ -74,8 +80,8 @@ export class AerodromeQuoter {
         return result;
       }
 
-      const routes = [[tokenIn.address, tokenOut.address, stable, AERODROME_FACTORY]];
-      const amounts: bigint[] = await this.router.getAmountsOut(amountIn, routes);
+      const routes: [string, string, boolean, string][] = [[tokenIn.address, tokenOut.address, stable, AERODROME_FACTORY]];
+      const amounts: bigint[] = await this.router.getFunction('getAmountsOut').staticCall(amountIn, routes);
       const amountOut = amounts[amounts.length - 1];
       const result = amountOut > 0n ? { amountOut, gasUnitsEstimate: undefined, meta: { stable } } : null;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result });
