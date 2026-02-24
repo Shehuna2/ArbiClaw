@@ -74,8 +74,8 @@ export class AerodromeQuoter {
         return result;
       }
 
-      const routes = [[tokenIn.address, tokenOut.address, stable, AERODROME_FACTORY]];
-      const amounts: bigint[] = await this.router.getAmountsOut(amountIn, routes);
+      const routes: [string, string, boolean, string][] = [[tokenIn.address, tokenOut.address, stable, AERODROME_FACTORY]];
+      const amounts: bigint[] = await this.router.getFunction('getAmountsOut').staticCall(amountIn, routes);
       const amountOut = amounts[amounts.length - 1];
       const result = amountOut > 0n ? { amountOut, gasUnitsEstimate: undefined, meta: { stable } } : null;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result });
