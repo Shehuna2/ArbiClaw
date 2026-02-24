@@ -33,19 +33,27 @@ const runSelfTest = async (
 
   const amountIn = toUnits(100, usdc.decimals);
   let success = 0;
+  let uniUsdcWethOk = false;
+  let aeroVolUsdcWethOk = false;
 
   if (adapters.uniswapv3) {
     for (const fee of [500, 3000, 10000]) {
       const q = await adapters.uniswapv3.quoteWithFee(usdc, weth, amountIn, fee);
       console.log(JSON.stringify({ dex: 'uniswapv3', pair: 'USDC/WETH', mode: `fee:${fee}`, ok: !!q, amountOut: q?.amountOut.toString(), err: q ? undefined : adapters.uniswapv3.getLastError() }));
-      if (q) success += 1;
+      if (q) {
+        success += 1;
+        uniUsdcWethOk = true;
+      }
     }
   }
 
   if (adapters.aerodrome) {
     const qVol = await adapters.aerodrome.quoteByMode(usdc, weth, amountIn, false);
     console.log(JSON.stringify({ dex: 'aerodrome', pair: 'USDC/WETH', mode: 'volatile', ok: !!qVol, amountOut: qVol?.amountOut.toString(), err: qVol ? undefined : adapters.aerodrome.getLastError() }));
-    if (qVol) success += 1;
+    if (qVol) {
+      success += 1;
+      aeroVolUsdcWethOk = true;
+    }
 
     if (adapters.aerodrome.canUseStable(usdc, weth)) {
       const qStable = await adapters.aerodrome.quoteByMode(usdc, weth, amountIn, true);
@@ -56,8 +64,20 @@ const runSelfTest = async (
     }
   }
 
+  if (!uniUsdcWethOk && !aeroVolUsdcWethOk) {
+    console.error('Self-test failed: both uniswapv3 and aerodrome volatile USDC->WETH quotes failed.');
+    return false;
+  }
+
   return success > 0;
 };
+
+const summarizeHopDebug = (hop: Awaited<ReturnType<typeof getTriangleHopOptions>>[number]) => ({
+  pair: `${hop.debug.tokenIn}->${hop.debug.tokenOut}`,
+  optionCount: hop.options.length,
+  dexCounts: hop.debug.dexCounts,
+  optionLabelsSample: hop.debug.optionLabels.slice(0, 8)
+});
 
 const filterTrianglesWithHopOptions = async (
   triangles: RouteCandidate[],
@@ -70,6 +90,15 @@ const filterTrianglesWithHopOptions = async (
 
   for (const triangle of triangles) {
     const [hop1, hop2, hop3] = await getTriangleHopOptions(triangle, adapters, feePrefs);
+
+    if (debugHops && logged < 10) {
+      log.info('hop-options', {
+        route: triangle.id,
+        hops: [summarizeHopDebug(hop1), summarizeHopDebug(hop2), summarizeHopDebug(hop3)]
+      });
+      logged += 1;
+    }
+
     const missing: string[] = [];
     if (hop1.options.length === 0) missing.push('hop1');
     if (hop2.options.length === 0) missing.push('hop2');
