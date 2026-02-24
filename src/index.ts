@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { JsonRpcProvider } from 'ethers';
 import { parseConfig } from './config/env.js';
 import { loadFeePrefs } from './config/fees.js';
@@ -23,6 +25,31 @@ const applySubset = (tokens: Token[], subset?: string[]): Token[] => {
   return tokens.filter((t) => symbolSet.has(t.symbol.toUpperCase()));
 };
 
+
+const assertAerodromeCalldataEncoding = (adapters: { aerodrome?: AerodromeQuoter }, usdc: Token, weth: Token, debugHops: boolean, selfTest: boolean): boolean => {
+  if (!adapters.aerodrome || (!debugHops && !selfTest)) return true;
+  const amountIn = toUnits('100', usdc.decimals);
+  const calldata = adapters.aerodrome.encodeGetAmountsOutCalldata(usdc.address, weth.address, amountIn, false);
+  const selector = calldata.slice(0, 10);
+  const firstWord = calldata.slice(10, 74);
+  const first20Bytes = calldata.slice(0, 42);
+  const expectedAmountWord = amountIn.toString(16).padStart(64, '0');
+
+  log.info('aerodrome-calldata-check', {
+    pair: 'USDC/WETH',
+    selector,
+    first20Bytes,
+    firstWordPrefix: firstWord.slice(0, 16)
+  });
+
+  if (firstWord !== expectedAmountWord) {
+    log.error('aerodrome-calldata-invalid', { expectedAmountWordPrefix: expectedAmountWord.slice(0, 16), gotPrefix: firstWord.slice(0, 16) });
+    return false;
+  }
+
+  return true;
+};
+
 const runSelfTest = async (
   adapters: { uniswapv3?: UniswapV3Quoter; aerodrome?: AerodromeQuoter },
   selectedTokens: Token[]
@@ -31,21 +58,31 @@ const runSelfTest = async (
   const weth = selectedTokens.find((t) => t.symbol === 'WETH');
   if (!usdc || !weth) throw new Error('Self-test requires USDC and WETH in token set.');
 
-  const amountIn = toUnits(100, usdc.decimals);
+  if (!assertAerodromeCalldataEncoding(adapters, usdc, weth, false, true)) return false;
+
+  const amountIn = toUnits('100', usdc.decimals);
   let success = 0;
+  let uniUsdcWethOk = false;
+  let aeroVolUsdcWethOk = false;
 
   if (adapters.uniswapv3) {
     for (const fee of [500, 3000, 10000]) {
       const q = await adapters.uniswapv3.quoteWithFee(usdc, weth, amountIn, fee);
       console.log(JSON.stringify({ dex: 'uniswapv3', pair: 'USDC/WETH', mode: `fee:${fee}`, ok: !!q, amountOut: q?.amountOut.toString(), err: q ? undefined : adapters.uniswapv3.getLastError() }));
-      if (q) success += 1;
+      if (q) {
+        success += 1;
+        uniUsdcWethOk = true;
+      }
     }
   }
 
   if (adapters.aerodrome) {
     const qVol = await adapters.aerodrome.quoteByMode(usdc, weth, amountIn, false);
     console.log(JSON.stringify({ dex: 'aerodrome', pair: 'USDC/WETH', mode: 'volatile', ok: !!qVol, amountOut: qVol?.amountOut.toString(), err: qVol ? undefined : adapters.aerodrome.getLastError() }));
-    if (qVol) success += 1;
+    if (qVol) {
+      success += 1;
+      aeroVolUsdcWethOk = true;
+    }
 
     if (adapters.aerodrome.canUseStable(usdc, weth)) {
       const qStable = await adapters.aerodrome.quoteByMode(usdc, weth, amountIn, true);
@@ -56,8 +93,30 @@ const runSelfTest = async (
     }
   }
 
+  if (!aeroVolUsdcWethOk && adapters.aerodrome) {
+    console.error('Self-test failed: aerodrome volatile USDC->WETH quote failed.');
+    return false;
+  }
+
+  if (!uniUsdcWethOk && adapters.uniswapv3) {
+    console.error('Self-test failed: uniswapv3 USDC->WETH quote failed for all fee tiers.');
+    return false;
+  }
+
+  if (!uniUsdcWethOk && !aeroVolUsdcWethOk) {
+    console.error('Self-test failed: both uniswapv3 and aerodrome volatile USDC->WETH quotes failed.');
+    return false;
+  }
+
   return success > 0;
 };
+
+const summarizeHopDebug = (hop: Awaited<ReturnType<typeof getTriangleHopOptions>>[number]) => ({
+  pair: `${hop.debug.tokenIn}->${hop.debug.tokenOut}`,
+  optionCount: hop.options.length,
+  dexCounts: hop.debug.dexCounts,
+  optionLabelsSample: hop.debug.optionLabels.slice(0, 8)
+});
 
 const filterTrianglesWithHopOptions = async (
   triangles: RouteCandidate[],
@@ -70,6 +129,15 @@ const filterTrianglesWithHopOptions = async (
 
   for (const triangle of triangles) {
     const [hop1, hop2, hop3] = await getTriangleHopOptions(triangle, adapters, feePrefs);
+
+    if (debugHops && logged < 10) {
+      log.info('hop-options', {
+        route: triangle.id,
+        hops: [summarizeHopDebug(hop1), summarizeHopDebug(hop2), summarizeHopDebug(hop3)]
+      });
+      logged += 1;
+    }
+
     const missing: string[] = [];
     if (hop1.options.length === 0) missing.push('hop1');
     if (hop2.options.length === 0) missing.push('hop2');
@@ -96,6 +164,32 @@ const filterTrianglesWithHopOptions = async (
   }
 
   return filtered;
+};
+
+
+interface JsonOpportunity {
+  triangle: string;
+  hops: Array<{ dex: string; label: string; tokenIn: string; tokenOut: string }>;
+  startUsdc: string;
+  endUsdc: string;
+  grossProfitUsdc: string;
+  gasCostUsdc: string;
+  netProfitUsdc: string;
+  startUsdcHuman: string;
+  netProfitUsdcHuman: string;
+}
+
+const writeJsonOutput = async (pathOrDash: string, payload: unknown): Promise<void> => {
+  const body = JSON.stringify(payload, null, 2);
+  if (pathOrDash === '-') {
+    process.stdout.write(`${body}
+`);
+    return;
+  }
+
+  await mkdir(dirname(pathOrDash), { recursive: true });
+  await writeFile(pathOrDash, `${body}
+`, 'utf-8');
 };
 
 const emptyStats = (trianglesSkippedNoHopOptions: number): SimStats => ({
@@ -138,11 +232,20 @@ const main = async () => {
   const enabledDexes = Object.keys(adapters).sort();
   if (!enabledDexes.length) throw new Error('No supported dexes enabled.');
 
+  const usdc = selectedTokens.find((t) => t.symbol === 'USDC');
+  const weth = selectedTokens.find((t) => t.symbol === 'WETH');
+  if (usdc && weth && !assertAerodromeCalldataEncoding(adapters, usdc, weth, cfg.debugHops, false)) {
+    process.exit(1);
+  }
+
   if (cfg.selfTest) {
     const ok = await runSelfTest(adapters, selectedTokens);
     if (!ok) process.exit(1);
     return;
   }
+
+  const provider = new JsonRpcProvider(cfg.rpcUrl);
+  const network = await provider.getNetwork();
 
   const midTokens = selectedTokens.filter((token) => token.symbol !== START_SYMBOL);
   const triangleCandidates = generateTriangles(startToken, midTokens, cfg.maxTriangles);
@@ -173,17 +276,28 @@ const main = async () => {
   });
 
   if (!triangles.length) {
+    const stats = { ...emptyStats(trianglesSkippedNoHopOptions) };
     log.warn('No triangles generated after hop-option filtering.');
-    log.info('stats', { ...emptyStats(trianglesSkippedNoHopOptions) });
+    log.info('stats', stats);
+
+    if (cfg.jsonOutput) {
+      await writeJsonOutput(cfg.jsonOutput, {
+        meta: {
+          ts: new Date().toISOString(),
+          chainId: Number(network.chainId),
+          rpc: cfg.rpcUrl,
+          config: cfg
+        },
+        stats,
+        opportunities: []
+      });
+    }
     return;
   }
 
-  const provider = new JsonRpcProvider(cfg.rpcUrl);
   const feeData = await provider.getFeeData();
   const gasPriceWei = feeData.gasPrice ?? feeData.maxFeePerGas ?? 1_000_000_000n;
 
-  const usdc = selectedTokens.find((t) => t.symbol === 'USDC');
-  const weth = selectedTokens.find((t) => t.symbol === 'WETH');
   const ethToUsdcPrice = usdc && weth ? await deriveEthToUsdcPrice(adapters, usdc, weth) : 0;
 
   const { results, stats } = await simulateTriangles({
@@ -203,6 +317,17 @@ const main = async () => {
   });
 
   const winners = results.sort((a, b) => cmpBigintDesc(a.netProfit, b.netProfit)).slice(0, cfg.topN);
+  const jsonOpportunities: JsonOpportunity[] = winners.map((row) => ({
+    triangle: row.route.id,
+    hops: row.hops.map((h) => ({ dex: h.dex, label: h.label, tokenIn: h.tokenIn.symbol, tokenOut: h.tokenOut.symbol })),
+    startUsdc: row.startAmount.toString(),
+    endUsdc: row.finalAmount.toString(),
+    grossProfitUsdc: row.grossProfit.toString(),
+    gasCostUsdc: row.gasCostUsdc.toString(),
+    netProfitUsdc: row.netProfit.toString(),
+    startUsdcHuman: formatFixed(row.startAmount, startToken.decimals),
+    netProfitUsdcHuman: formatFixed(row.netProfit, startToken.decimals)
+  }));
   for (const [idx, row] of winners.entries()) {
     const route = row.hops.map((h) => `${h.tokenIn.symbol} -(${h.label})-> ${h.tokenOut.symbol}`).join(' ');
     log.info(`opportunity-${idx + 1}`, {
@@ -213,7 +338,21 @@ const main = async () => {
     });
   }
 
-  log.info('stats', { ...stats, trianglesSkippedNoHopOptions: stats.trianglesSkippedNoHopOptions + trianglesSkippedNoHopOptions });
+  const finalStats = { ...stats, trianglesSkippedNoHopOptions: stats.trianglesSkippedNoHopOptions + trianglesSkippedNoHopOptions };
+  log.info('stats', finalStats);
+
+  if (cfg.jsonOutput) {
+    await writeJsonOutput(cfg.jsonOutput, {
+      meta: {
+        ts: new Date().toISOString(),
+        chainId: Number(network.chainId),
+        rpc: cfg.rpcUrl,
+        config: cfg
+      },
+      stats: finalStats,
+      opportunities: jsonOpportunities
+    });
+  }
 };
 
 main().catch((error) => {
