@@ -9,8 +9,8 @@ interface SimulateParams {
   adapters: DexAdapters;
   triangles: RouteCandidate[];
   startToken: Token;
-  amountInHuman: number;
-  minProfitHuman: number;
+  amountInHuman: string;
+  minProfitHuman: string;
   gasPriceWei: bigint;
   ethToUsdcPrice: number;
   maxCombosPerTriangle: number;
@@ -224,7 +224,26 @@ const simulateCombo = async (
     const hop = hops[i];
     stats.quoteAttempts += 1;
 
-    const quote = await option.quote(amount);
+    let quote: Awaited<ReturnType<HopOption['quote']>>;
+    try {
+      quote = await option.quote(amount);
+    } catch (error) {
+      const hopKey = `hop${i + 1}:${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`;
+      const errMsg = error instanceof Error ? error.message : String(error);
+      markError(stats, option.dexId, hopKey, `THROW: ${errMsg}`.slice(0, 180), debugHops);
+      return {
+        route: triangle,
+        hops,
+        startAmount,
+        finalAmount: amount,
+        grossProfit: 0n,
+        gasCostUsdc: 0n,
+        netProfit: 0n,
+        failed: true,
+        failReason: `${option.dexId} THROW: ${errMsg}`
+      };
+    }
+
     if (!quote || quote.amountOut <= 0n) {
       const hopKey = `hop${i + 1}:${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`;
       const summary = getLastDexError(adapters, option.dexId);
@@ -248,7 +267,9 @@ const simulateCombo = async (
 
   const gross = amount - startAmount;
   const gasWei = gasUnits * gasPriceWei;
-  const gasUsdc = ethToUsdcPrice > 0 ? toUnits((Number(gasWei) / 1e18) * ethToUsdcPrice, 6) : 0n;
+  const gasUsdc = ethToUsdcPrice > 0
+    ? (gasWei * BigInt(Math.round(ethToUsdcPrice * 1_000_000))) / 1_000_000_000_000_000_000n
+    : 0n;
 
   return {
     route: triangle,

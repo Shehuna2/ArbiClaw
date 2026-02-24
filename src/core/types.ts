@@ -8,8 +8,8 @@ export interface Token {
 
 export interface ScanConfig {
   rpcUrl: string;
-  amountInHuman: number;
-  minProfitHuman: number;
+  amountInHuman: string;
+  minProfitHuman: string;
   topN: number;
   maxTriangles: number;
   maxCombosPerTriangle: number;

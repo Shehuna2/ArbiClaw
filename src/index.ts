@@ -26,7 +26,7 @@ const applySubset = (tokens: Token[], subset?: string[]): Token[] => {
 
 const assertAerodromeCalldataEncoding = (adapters: { aerodrome?: AerodromeQuoter }, usdc: Token, weth: Token, debugHops: boolean, selfTest: boolean): boolean => {
   if (!adapters.aerodrome || (!debugHops && !selfTest)) return true;
-  const amountIn = toUnits(100, usdc.decimals);
+  const amountIn = toUnits('100', usdc.decimals);
   const calldata = adapters.aerodrome.encodeGetAmountsOutCalldata(usdc.address, weth.address, amountIn, false);
   const selector = calldata.slice(0, 10);
   const firstWord = calldata.slice(10, 74);
@@ -58,7 +58,7 @@ const runSelfTest = async (
 
   if (!assertAerodromeCalldataEncoding(adapters, usdc, weth, false, true)) return false;
 
-  const amountIn = toUnits(100, usdc.decimals);
+  const amountIn = toUnits('100', usdc.decimals);
   let success = 0;
   let uniUsdcWethOk = false;
   let aeroVolUsdcWethOk = false;

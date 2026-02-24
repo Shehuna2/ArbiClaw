@@ -2,6 +2,7 @@ import { Contract, JsonRpcProvider } from 'ethers';
 import { StableConfig, isStableEligiblePair } from '../../config/stables.js';
 import { QuoteResult } from '../DexQuoter.js';
 import { Token } from '../../core/types.js';
+import { log } from '../../core/log.js';
 
 const AERODROME_ROUTER = '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43';
 const AERODROME_FACTORY = '0x420DD381b31aEf6683db6B902084cB0FFECe40Da';
@@ -29,6 +30,7 @@ export class AerodromeQuoter {
   private readonly cache = new Map<string, CachedQuote>();
   private readonly ttlMs = 8_000;
   private lastError = '';
+  private selectorLogged = false;
 
   constructor(rpcUrl: string, private readonly stableConfig: StableConfig) {
     const provider = new JsonRpcProvider(rpcUrl);
@@ -44,6 +46,16 @@ export class AerodromeQuoter {
     return isStableEligiblePair(tokenIn, tokenOut, this.stableConfig);
   }
 
+
+
+  private maybeLogSelectorInvariant(): void {
+    if (this.selectorLogged) return;
+    if (!process.argv.includes('--debugHops') && !process.argv.includes('--selfTest')) return;
+
+    const selector = this.router.interface.getFunction('getAmountsOut')?.selector ?? 'unknown';
+    log.info('aerodrome-selector', { selector, expectedSelector: '0x5509a1ac' });
+    this.selectorLogged = true;
+  }
 
   encodeGetAmountsOutCalldata(tokenIn: string, tokenOut: string, amountIn: bigint, stable: boolean): string {
     const routes: [string, string, boolean, string][] = [[tokenIn, tokenOut, stable, AERODROME_FACTORY]];
@@ -61,6 +73,7 @@ export class AerodromeQuoter {
   }
 
   async quoteByMode(tokenIn: Token, tokenOut: Token, amountIn: bigint, stable: boolean): Promise<QuoteResult | null> {
+    this.maybeLogSelectorInvariant();
     if (stable && !this.canUseStable(tokenIn, tokenOut)) {
       this.lastError = 'STABLE_SKIPPED: pair not stable-eligible';
       return null;
