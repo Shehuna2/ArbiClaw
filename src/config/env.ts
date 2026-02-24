@@ -5,7 +5,7 @@ dotenv.config();
 
 const DEFAULT_FEES = [500, 3000, 10000];
 const DEFAULT_TOKENS_PATH = 'tokens/base.top.json';
-const DEFAULT_DEXES = ['uniswapv3'];
+const DEFAULT_DEXES = ['uniswapv3', 'aerodrome'];
 
 const getArgValue = (name: string): string | undefined => {
   const idx = process.argv.indexOf(`--${name}`);
@@ -42,9 +42,9 @@ export const parseConfig = (): ScanConfig => {
     minProfitHuman: getNumArg('minProfit', 0),
     topN: getNumArg('top', 20),
     maxTriangles: getNumArg('maxTriangles', 200),
-    maxCombosPerTriangle: getNumArg('maxCombosPerTriangle', 500),
+    maxCombosPerTriangle: getNumArg('maxCombosPerTriangle', 300),
     maxTotalQuotes: getNumArg('maxTotalQuotes', 4000),
-    timeBudgetMs: getNumArg('timeBudgetMs', 20_000),
+    timeBudgetMs: getNumArg('timeBudgetMs', 15_000),
     quoteConcurrency: getNumArg('quoteConcurrency', 6),
     fees,
     tokensPath: getArgValue('tokens') ?? DEFAULT_TOKENS_PATH,

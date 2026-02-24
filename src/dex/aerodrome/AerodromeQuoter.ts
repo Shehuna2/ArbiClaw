@@ -2,7 +2,7 @@ import { Contract, JsonRpcProvider } from 'ethers';
 import { QuoteResult } from '../DexQuoter.js';
 import { Token } from '../../core/types.js';
 
-const AERODROME_ROUTER = '0xcF77a3Ba9A5CA399B7C97c74d54e5b648dEecf97';
+const AERODROME_ROUTER = '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43';
 const AERODROME_FACTORY = '0x420DD381b31aEf6683db6B902084cB0FFECe40Da';
 const ROUTER_ABI = [
   'function getAmountsOut(uint256 amountIn, tuple(address from,address to,bool stable,address factory)[] routes) external view returns (uint256[] amounts)'

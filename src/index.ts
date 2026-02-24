@@ -3,7 +3,7 @@ import { parseConfig } from './config/env.js';
 import { START_SYMBOL } from './config/tokens.js';
 import { loadTokens } from './config/loadTokens.js';
 import { Token } from './core/types.js';
-import { formatFixed } from './core/math.js';
+import { cmpBigintDesc, formatFixed } from './core/math.js';
 import { log } from './core/log.js';
 import { AerodromeQuoter } from './dex/aerodrome/AerodromeQuoter.js';
 import { UniswapV3Quoter } from './dex/uniswapv3/UniswapV3Quoter.js';
@@ -84,7 +84,7 @@ const main = async () => {
     quoteConcurrency: cfg.quoteConcurrency
   });
 
-  const winners = results.sort((a, b) => Number(b.netProfit - a.netProfit)).slice(0, cfg.topN);
+  const winners = results.sort((a, b) => cmpBigintDesc(a.netProfit, b.netProfit)).slice(0, cfg.topN);
 
   for (const [idx, row] of winners.entries()) {
     const route = row.hops.map((h) => `${h.tokenIn.symbol} -(${h.label})-> ${h.tokenOut.symbol}`).join(' ');
