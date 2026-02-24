@@ -1,57 +1,35 @@
-import { Token, RouteCandidate, SimResult } from '../core/types.js';
-import { fromUnits, toUnits } from '../core/math.js';
-import { log } from '../core/log.js';
-import { UniswapV3Quoter } from '../dex/uniswapv3/quoter.js';
+import { RouteCandidate, SimResult, Token } from '../core/types.js';
+import { toUnits } from '../core/math.js';
+import { DexQuoter } from '../dex/DexQuoter.js';
 import { runLimited } from '../utils/concurrency.js';
 
 interface SimulateParams {
-  quoter: UniswapV3Quoter;
+  dexQuoters: Map<string, DexQuoter>;
   routes: RouteCandidate[];
   startToken: Token;
   amountInHuman: number;
   minProfitHuman: number;
+  gasPriceWei: bigint;
+  ethToUsdcPrice: number;
 }
 
 export const simulateRoutes = async (params: SimulateParams): Promise<SimResult[]> => {
-  const { quoter, routes, startToken, amountInHuman, minProfitHuman } = params;
-  if (!routes.length) return [];
-
+  const { dexQuoters, routes, startToken, amountInHuman, minProfitHuman, gasPriceWei, ethToUsdcPrice } = params;
   const startAmount = toUnits(amountInHuman, startToken.decimals);
   const minProfit = toUnits(minProfitHuman, startToken.decimals);
-  const gasPriceWei = await quoter.getGasPriceWei();
 
-  let ethToUsdcPrice = 0;
-  try {
-    const gasRefToken = routes[0].hops[0].tokenOut;
-    const oneEthOut = await quoter.quoteExactInSingle({
-      tokenIn: gasRefToken,
-      tokenOut: startToken,
-      fee: 3000,
-      amountIn: 10n ** 18n
-    });
-    ethToUsdcPrice = fromUnits(oneEthOut.amountOut, startToken.decimals);
-  } catch {
-    log.warn('Could not derive gas reference price for conversion. Using zero gas USDC cost.');
-  }
-
-  const results = await runLimited(routes, 8, async (route) => {
+  return runLimited(routes, 8, async (route) => {
     let amount = startAmount;
     let gasUnits = 0n;
 
     try {
       for (const hop of route.hops) {
-        if (!(await quoter.hasPool(hop.tokenIn.address, hop.tokenOut.address, hop.fee))) {
-          throw new Error(`Pool missing (${hop.tokenIn.symbol}/${hop.tokenOut.symbol} ${hop.fee})`);
-        }
-
-        const quote = await quoter.quoteExactInSingle({
-          tokenIn: hop.tokenIn,
-          tokenOut: hop.tokenOut,
-          fee: hop.fee,
-          amountIn: amount
-        });
+        const quoter = dexQuoters.get(hop.dex);
+        if (!quoter) throw new Error(`Missing quoter for dex=${hop.dex}`);
+        const quote = await quoter.quoteExactIn({ tokenIn: hop.tokenIn, tokenOut: hop.tokenOut, amountIn: amount });
+        if (!quote) throw new Error(`No quote (${hop.dex}:${hop.tokenIn.symbol}->${hop.tokenOut.symbol})`);
         amount = quote.amountOut;
-        gasUnits += quote.gasEstimate ?? 150_000n;
+        gasUnits += quote.gasUnitsEstimate ?? 150_000n;
       }
 
       const gross = amount - startAmount;
@@ -83,6 +61,4 @@ export const simulateRoutes = async (params: SimulateParams): Promise<SimResult[
       };
     }
   });
-
-  return results;
 };

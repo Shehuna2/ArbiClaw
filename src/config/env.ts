@@ -5,6 +5,7 @@ dotenv.config();
 
 const DEFAULT_FEES = [500, 3000, 10000];
 const DEFAULT_TOKENS_PATH = 'tokens/base.top.json';
+const DEFAULT_DEXES = ['uniswapv3'];
 
 const getArgValue = (name: string): string | undefined => {
   const idx = process.argv.indexOf(`--${name}`);
@@ -33,6 +34,12 @@ export const parseConfig = (): ScanConfig => {
     ? tokenSubsetRaw.split(',').map((x) => x.trim()).filter((x) => x.length > 0)
     : undefined;
 
+  const dexesRaw = getArgValue('dexes');
+  const dexes = dexesRaw
+    ? dexesRaw.split(',').map((x) => x.trim().toLowerCase()).filter((x) => x.length > 0)
+    : DEFAULT_DEXES;
+  if (!dexes.length) throw new Error('No dexes enabled.');
+
   return {
     rpcUrl,
     amountInHuman: getNumArg('amount', 100),
@@ -41,6 +48,7 @@ export const parseConfig = (): ScanConfig => {
     maxTriangles: getNumArg('maxTriangles', 200),
     fees,
     tokensPath: getArgValue('tokens') ?? DEFAULT_TOKENS_PATH,
-    tokenSubset
+    tokenSubset,
+    dexes
   };
 };

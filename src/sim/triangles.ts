@@ -3,20 +3,21 @@ import { RouteCandidate, Token } from '../core/types.js';
 export const generateTriangles = (
   startToken: Token,
   midTokens: Token[],
-  fees: number[],
+  dexes: string[],
   maxTriangles: number
 ): RouteCandidate[] => {
   const routes: RouteCandidate[] = [];
   const sortedMidTokens = [...midTokens].sort((a, b) => a.symbol.localeCompare(b.symbol));
+  const sortedDexes = [...dexes].sort((a, b) => a.localeCompare(b));
 
   for (const token of sortedMidTokens) {
-    for (const feeIn of fees) {
-      for (const feeOut of fees) {
+    for (const dexIn of sortedDexes) {
+      for (const dexOut of sortedDexes) {
         routes.push({
-          id: `${startToken.symbol}->${token.symbol}->${startToken.symbol}:${feeIn}/${feeOut}`,
+          id: `${startToken.symbol}->${token.symbol}->${startToken.symbol}:${dexIn}/${dexOut}`,
           hops: [
-            { dex: 'uniswap-v3', tokenIn: startToken, tokenOut: token, fee: feeIn },
-            { dex: 'uniswap-v3', tokenIn: token, tokenOut: startToken, fee: feeOut }
+            { dex: dexIn, tokenIn: startToken, tokenOut: token },
+            { dex: dexOut, tokenIn: token, tokenOut: startToken }
           ]
         });
 

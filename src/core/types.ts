@@ -15,24 +15,19 @@ export interface ScanConfig {
   fees: number[];
   tokensPath: string;
   tokenSubset?: string[];
+  dexes: string[];
 }
 
 export interface RouteHop {
   dex: string;
   tokenIn: Token;
   tokenOut: Token;
-  fee: number;
+  fee?: number;
 }
 
 export interface RouteCandidate {
   id: string;
   hops: RouteHop[];
-}
-
-export interface HopQuote {
-  amountIn: bigint;
-  amountOut: bigint;
-  gasEstimate?: bigint;
 }
 
 export interface SimResult {
