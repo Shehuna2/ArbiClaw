@@ -7,7 +7,7 @@ import { buildStableConfig, loadStablePairOverrides } from './config/stables.js'
 import { START_SYMBOL } from './config/tokens.js';
 import { loadTokens } from './config/loadTokens.js';
 import { Token, RouteCandidate, SimStats } from './core/types.js';
-import { cmpBigintDesc, formatFixed, toUnits } from './core/math.js';
+import { formatFixed, toUnits } from './core/math.js';
 import { formatSignedUsdc, formatUsdc, padLeft } from './core/format.js';
 import { log } from './core/log.js';
 import { AerodromeQuoter } from './dex/aerodrome/AerodromeQuoter.js';
@@ -57,6 +57,21 @@ const applySubset = (tokens: Token[], subset?: string[]): Token[] => {
   return tokens.filter((t) => symbolSet.has(t.symbol.toUpperCase()));
 };
 
+
+
+const bySymbolAsc = (a: Token, b: Token): number => a.symbol.localeCompare(b.symbol);
+const byRouteIdAsc = (a: RouteCandidate, b: RouteCandidate): number => a.id.localeCompare(b.id);
+
+const compareResultsForDisplay = (a: Awaited<ReturnType<typeof simulateTriangles>>['results'][number], b: Awaited<ReturnType<typeof simulateTriangles>>['results'][number]): number => {
+  if (a.netProfit !== b.netProfit) return a.netProfit > b.netProfit ? -1 : 1;
+
+  const routeCmp = a.route.id.localeCompare(b.route.id);
+  if (routeCmp !== 0) return routeCmp;
+
+  const hopsA = a.hops.map((hop) => hop.label).join('|');
+  const hopsB = b.hops.map((hop) => hop.label).join('|');
+  return hopsA.localeCompare(hopsB);
+};
 
 const assertAerodromeCalldataEncoding = (adapters: { aerodrome?: AerodromeQuoter }, usdc: Token, weth: Token, debugHops: boolean, selfTest: boolean): boolean => {
   if (!adapters.aerodrome || (!debugHops && !selfTest)) return true;
@@ -288,10 +303,11 @@ const renderSummary = (
   write: (line: string) => void,
   stats: SimStats,
   elapsedMs: number,
-  timeBudgetMs: number
+  timeBudgetMs: number,
+  completedRoutes: number
 ) => {
   write('Summary:');
-  write(`trianglesConsidered=${stats.trianglesConsidered} combosEnumerated=${stats.combosEnumerated} quoteAttempts=${stats.quoteAttempts} quoteFailures=${stats.quoteFailures} elapsedMs=${elapsedMs} timeBudgetMs=${timeBudgetMs}`);
+  write(`trianglesConsidered=${stats.trianglesConsidered} combosEnumerated=${stats.combosEnumerated} completedRoutes=${completedRoutes} quoteAttempts=${stats.quoteAttempts} quoteFailures=${stats.quoteFailures} elapsedMs=${elapsedMs} timeBudgetMs=${timeBudgetMs}`);
   if (stats.stoppedEarly && stats.stopReason === 'time budget') {
     write('stoppedEarly=true (time budget)');
   }
@@ -312,7 +328,7 @@ const main = async () => {
   const writeHuman = humanOut(cfg.jsonOutput);
   const feePrefs = await loadFeePrefs(cfg.feeConfigPath);
   const allTokens = await loadTokens(cfg.tokensPath);
-  const selectedTokens = applySubset(allTokens, cfg.tokenSubset);
+  const selectedTokens = applySubset(allTokens, cfg.tokenSubset).sort(bySymbolAsc);
   const stablePairOverrides = await loadStablePairOverrides(cfg.aeroStablePairsPath);
   const stableConfig = buildStableConfig(selectedTokens, stablePairOverrides);
 
@@ -344,7 +360,7 @@ const main = async () => {
   const network = await provider.getNetwork();
 
   const midTokens = selectedTokens.filter((token) => token.symbol !== START_SYMBOL);
-  const triangleCandidates = generateTriangles(startToken, midTokens, cfg.maxTriangles);
+  const triangleCandidates = generateTriangles(startToken, midTokens, cfg.maxTriangles).sort(byRouteIdAsc);
   const trianglesWithOptions = await filterTrianglesWithHopOptions(triangleCandidates, adapters, feePrefs, cfg.debugHops);
   const trianglesSkippedNoHopOptions = triangleCandidates.length - trianglesWithOptions.length;
 
@@ -360,7 +376,7 @@ const main = async () => {
   if (!trianglesWithOptions.length) {
     const stats = { ...emptyStats(trianglesSkippedNoHopOptions) };
     writeHuman('No completed routes. Try fewer tokens, increase timeBudget, or use --debugHops.');
-    renderSummary(writeHuman, stats, Date.now() - startedAt, cfg.timeBudgetMs);
+    renderSummary(writeHuman, stats, Date.now() - startedAt, cfg.timeBudgetMs, 0);
 
     if (cfg.jsonOutput) {
       await writeJsonOutput(cfg.jsonOutput, {
@@ -401,7 +417,8 @@ const main = async () => {
     traceAmounts: cfg.traceAmounts
   });
 
-  const winners = results.sort((a, b) => cmpBigintDesc(a.netProfit, b.netProfit)).slice(0, cfg.topN);
+  const sortedResults = [...results].sort(compareResultsForDisplay);
+  const winners = sortedResults.slice(0, cfg.topN);
   const jsonOpportunities: JsonOpportunity[] = winners.map((row) => ({
     triangle: row.route.id,
     hops: row.hops.map((h) => ({ dex: h.dex, label: h.label, tokenIn: h.tokenIn.symbol, tokenOut: h.tokenOut.symbol })),
@@ -416,7 +433,7 @@ const main = async () => {
   renderTopRoutes(writeHuman, winners);
 
   const finalStats = { ...stats, trianglesSkippedNoHopOptions: stats.trianglesSkippedNoHopOptions + trianglesSkippedNoHopOptions };
-  renderSummary(writeHuman, finalStats, Date.now() - simulationStartedAt, cfg.timeBudgetMs);
+  renderSummary(writeHuman, finalStats, Date.now() - simulationStartedAt, cfg.timeBudgetMs, results.length);
 
   if (cfg.jsonOutput) {
     await writeJsonOutput(cfg.jsonOutput, {

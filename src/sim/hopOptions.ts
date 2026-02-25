@@ -53,10 +53,15 @@ const shouldPreferUniFirst = (tokenIn: Token, tokenOut: Token): boolean => {
   return false;
 };
 
+const sortByLabelAsc = (options: HopOption[]): HopOption[] => [...options].sort((a, b) => a.label.localeCompare(b.label));
+
 const orderHopOptions = (tokenIn: Token, tokenOut: Token, uniOptions: HopOption[], aeroOptions: HopOption[]): HopOption[] => {
-  if (shouldPreferUniFirst(tokenIn, tokenOut)) return [...uniOptions, ...aeroOptions];
-  if (isAeroPair(tokenIn, tokenOut)) return [...aeroOptions, ...uniOptions];
-  return [...uniOptions, ...aeroOptions];
+  const sortedUni = sortByLabelAsc(uniOptions);
+  const sortedAero = sortByLabelAsc(aeroOptions);
+
+  if (shouldPreferUniFirst(tokenIn, tokenOut)) return [...sortedUni, ...sortedAero];
+  if (isAeroPair(tokenIn, tokenOut)) return [...sortedAero, ...sortedUni];
+  return [...sortedUni, ...sortedAero];
 };
 
 export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }: HopBuildParams): Promise<HopOptionsBuild> => {

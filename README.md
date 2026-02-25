@@ -96,7 +96,7 @@ Top routes (completed):
     gross=-0.632895 gas=NA net=NA
 
 Summary:
-trianglesConsidered=12 combosEnumerated=96 quoteAttempts=240 quoteFailures=21 elapsedMs=14876 timeBudgetMs=15000
+trianglesConsidered=12 combosEnumerated=96 completedRoutes=12 quoteAttempts=240 quoteFailures=21 elapsedMs=14876 timeBudgetMs=15000
 stoppedEarly=true (time budget)
 errorCountersByDex:
   aerodrome: timeouts=1 callExceptions=14 other=3 total=18
