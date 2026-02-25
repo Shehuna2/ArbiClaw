@@ -8,8 +8,8 @@ export interface Token {
 
 export interface ScanConfig {
   rpcUrl: string;
-  amountInHuman: number;
-  minProfitHuman: number;
+  amountInHuman: string;
+  minProfitHuman: string;
   topN: number;
   maxTriangles: number;
   maxCombosPerTriangle: number;
@@ -18,12 +18,14 @@ export interface ScanConfig {
   quoteConcurrency: number;
   selfTest: boolean;
   debugHops: boolean;
+  traceAmounts: boolean;
   fees: number[];
   feeConfigPath?: string;
   aeroStablePairsPath?: string;
   tokensPath: string;
   tokenSubset?: string[];
   dexes: string[];
+  jsonOutput?: string;
 }
 
 export interface RouteHop {
