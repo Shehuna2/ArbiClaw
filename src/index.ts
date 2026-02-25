@@ -15,6 +15,37 @@ import { UniswapV3Quoter } from './dex/uniswapv3/UniswapV3Quoter.js';
 import { simulateTriangles, deriveEthToUsdcPrice, getTriangleHopOptions, TriangleWithHopOptions } from './sim/simulate.js';
 import { generateTriangles } from './sim/triangles.js';
 
+
+const safeStringify = (value: unknown): string => {
+  try {
+    const json = JSON.stringify(value);
+    if (json === undefined) return String(value);
+    return json;
+  } catch {
+    return String(value);
+  }
+};
+
+const normalizeFatalError = (error: unknown): Record<string, unknown> => {
+  if (error instanceof Error) {
+    const message = error.message && error.message.trim().length > 0
+      ? error.message
+      : 'Error thrown with empty message';
+    return {
+      name: error.name || 'Error',
+      message,
+      stack: error.stack || '(no stack trace)'
+    };
+  }
+
+  const type = error === null ? 'null' : typeof error;
+  const value = safeStringify(error);
+  return {
+    type,
+    value: value && value.trim().length > 0 ? value : '(empty thrown value)'
+  };
+};
+
 const applySubset = (tokens: Token[], subset?: string[]): Token[] => {
   if (!subset || subset.length === 0) return tokens;
   const symbolSet = new Set(subset.map((s) => s.toUpperCase()));
@@ -402,6 +433,6 @@ const main = async () => {
 };
 
 main().catch((error) => {
-  log.error('fatal', { error: error instanceof Error ? error.message : String(error) });
+  log.error('fatal', normalizeFatalError(error));
   process.exit(1);
 });

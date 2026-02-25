@@ -287,7 +287,8 @@ const simulateCombo = async (
       quote = await option.quote(amount);
     } catch (error) {
       const hopKey = `hop${i + 1}:${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`;
-      const errMsg = error instanceof Error ? error.message : String(error);
+      const rawErrMsg = error instanceof Error ? error.message : String(error);
+      const errMsg = rawErrMsg && rawErrMsg.trim().length > 0 ? rawErrMsg : 'unknown quote error';
       if (traceAmounts && comboAttemptForTriangle <= 10) {
         log.warn('hop-fail', {
           triangle: triangle.id,
