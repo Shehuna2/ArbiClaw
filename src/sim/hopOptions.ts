@@ -6,6 +6,7 @@ import { UniswapV3Quoter } from '../dex/uniswapv3/UniswapV3Quoter.js';
 export interface HopQuoteResult {
   amountOut: bigint;
   gasUnitsEstimate?: bigint;
+  meta?: Record<string, unknown>;
 }
 
 export interface HopOption {
@@ -83,7 +84,7 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
           label: `UNI:${fee}`,
           quote: async (amountIn: bigint) => {
             const result = await adapters.uniswapv3?.quoteWithFee(tokenIn, tokenOut, amountIn, fee);
-            return result ? { amountOut: result.amountOut, gasUnitsEstimate: result.gasUnitsEstimate } : null;
+            return result ? { amountOut: result.amountOut, gasUnitsEstimate: result.gasUnitsEstimate, meta: result.meta } : null;
           }
         });
       } catch {
@@ -99,7 +100,7 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
       label: 'AERO:vol',
       quote: async (amountIn: bigint) => {
         const result = await adapters.aerodrome?.quoteExactIn({ tokenIn, tokenOut, amountIn }, 'hopOptions');
-        return result ? { amountOut: result.amountOut, gasUnitsEstimate: result.gasUnitsEstimate } : null;
+        return result ? { amountOut: result.amountOut, gasUnitsEstimate: result.gasUnitsEstimate, meta: result.meta } : null;
       }
     });
 
@@ -109,7 +110,7 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
         label: 'AERO:stable',
         quote: async (amountIn: bigint) => {
           const result = await adapters.aerodrome?.quoteByMode(tokenIn, tokenOut, amountIn, true);
-          return result ? { amountOut: result.amountOut, gasUnitsEstimate: result.gasUnitsEstimate } : null;
+          return result ? { amountOut: result.amountOut, gasUnitsEstimate: result.gasUnitsEstimate, meta: result.meta } : null;
         }
       });
     }

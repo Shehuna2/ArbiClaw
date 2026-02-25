@@ -8,6 +8,7 @@ import { START_SYMBOL } from './config/tokens.js';
 import { loadTokens } from './config/loadTokens.js';
 import { Token, RouteCandidate, SimStats } from './core/types.js';
 import { cmpBigintDesc, formatFixed, toUnits } from './core/math.js';
+import { formatSignedUsdc, formatUsdc, padLeft } from './core/format.js';
 import { log } from './core/log.js';
 import { AerodromeQuoter } from './dex/aerodrome/AerodromeQuoter.js';
 import { UniswapV3Quoter } from './dex/uniswapv3/UniswapV3Quoter.js';
@@ -209,11 +210,65 @@ const emptyStats = (trianglesSkippedNoHopOptions: number): SimStats => ({
   hop3OptionsMax: 0,
   errorsByDex: {},
   errorsByHop: {},
-  topErrorsByDex: {}
+  topErrorsByDex: {},
+  errorTypeCountersByDex: {}
 });
+
+
+const humanOut = (cfgJsonOutput?: string) => (line: string) => {
+  if (cfgJsonOutput) {
+    console.error(line);
+    return;
+  }
+  console.log(line);
+};
+
+const renderHumanHeader = (write: (line: string) => void, cfg: ReturnType<typeof parseConfig>, rpcHost: string, enabledDexes: string[], selectedTokenSymbols: string[]) => {
+  write('=== ArbiClaw Simulation ===');
+  write(`chain=Base | rpc=${rpcHost} | dexes=${enabledDexes.join(',')}`);
+  write(`tokens=${selectedTokenSymbols.join(',')} | amount=${cfg.amountInHuman} | maxTriangles=${cfg.maxTriangles} | maxCombosPerTriangle=${cfg.maxCombosPerTriangle} | timeBudgetMs=${cfg.timeBudgetMs}`);
+  write('');
+};
+
+const renderTopRoutes = (write: (line: string) => void, winners: Awaited<ReturnType<typeof simulateTriangles>>['results']) => {
+  write('Top routes (completed):');
+  if (!winners.length) {
+    write('No completed routes. Try fewer tokens, increase timeBudget, or use --debugHops.');
+    write('');
+    return;
+  }
+
+  for (const [idx, row] of winners.entries()) {
+    const route = row.hops.map((h) => `${h.tokenIn.symbol}-(${h.label})->${h.tokenOut.symbol}`).join(' ');
+    write(`${padLeft(String(idx + 1), 2)}. ${route}`);
+    write(`    startUSDC=${formatUsdc(row.startAmount)} endUSDC=${formatUsdc(row.finalAmount)} hops=${row.hops.length}`);
+    write(`    gross=${formatSignedUsdc(row.grossProfit)} gas=${formatUsdc(row.gasCostUsdc)} net=${formatSignedUsdc(row.netProfit)}`);
+  }
+  write('');
+};
+
+const renderSummary = (
+  write: (line: string) => void,
+  stats: SimStats,
+  elapsedMs: number
+) => {
+  write('Summary:');
+  write(`trianglesConsidered=${stats.trianglesConsidered} combosEnumerated=${stats.combosEnumerated} quoteAttempts=${stats.quoteAttempts} quoteFailures=${stats.quoteFailures} elapsedMs=${elapsedMs}`);
+
+  const dexes = Object.keys(stats.errorsByDex).sort();
+  if (dexes.length) {
+    write('errorCountersByDex:');
+    for (const dex of dexes) {
+      const c = stats.errorTypeCountersByDex[dex] ?? { timeouts: 0, callExceptions: 0, other: 0 };
+      write(`  ${dex}: timeouts=${c.timeouts} callExceptions=${c.callExceptions} other=${c.other} total=${stats.errorsByDex[dex] ?? 0}`);
+    }
+  }
+};
 
 const main = async () => {
   const cfg = parseConfig();
+  const startedAt = Date.now();
+  const writeHuman = humanOut(cfg.jsonOutput);
   const feePrefs = await loadFeePrefs(cfg.feeConfigPath);
   const allTokens = await loadTokens(cfg.tokensPath);
   const selectedTokens = applySubset(allTokens, cfg.tokenSubset);
@@ -252,34 +307,19 @@ const main = async () => {
   const trianglesWithOptions = await filterTrianglesWithHopOptions(triangleCandidates, adapters, feePrefs, cfg.debugHops);
   const trianglesSkippedNoHopOptions = triangleCandidates.length - trianglesWithOptions.length;
 
-  log.info('scan-config', {
-    rpc: cfg.rpcUrl,
-    amount: cfg.amountInHuman,
-    minProfit: cfg.minProfitHuman,
-    top: cfg.topN,
-    maxTriangles: cfg.maxTriangles,
-    maxCombosPerTriangle: cfg.maxCombosPerTriangle,
-    maxTotalQuotes: cfg.maxTotalQuotes,
-    timeBudgetMs: cfg.timeBudgetMs,
-    quoteConcurrency: cfg.quoteConcurrency,
-    selfTest: cfg.selfTest,
-    debugHops: cfg.debugHops,
-    traceAmounts: cfg.traceAmounts,
-    fees: cfg.fees,
-    feeConfigPath: cfg.feeConfigPath,
-    aeroStablePairsPath: cfg.aeroStablePairsPath,
-    tokensPath: cfg.tokensPath,
-    selectedTokens: selectedTokens.map((t) => t.symbol).sort(),
-    dexes: enabledDexes,
-    triangles: trianglesWithOptions.length,
-    triangleCandidates: triangleCandidates.length,
-    trianglesSkippedNoHopOptions
-  });
+  const rpcHost = (() => {
+    try {
+      return new URL(cfg.rpcUrl).host;
+    } catch {
+      return cfg.rpcUrl;
+    }
+  })();
+  renderHumanHeader(writeHuman, cfg, rpcHost, enabledDexes, selectedTokens.map((t) => t.symbol).sort());
 
   if (!trianglesWithOptions.length) {
     const stats = { ...emptyStats(trianglesSkippedNoHopOptions) };
-    log.warn('No triangles generated after hop-option filtering.');
-    log.info('stats', stats);
+    writeHuman('No completed routes. Try fewer tokens, increase timeBudget, or use --debugHops.');
+    renderSummary(writeHuman, stats, Date.now() - startedAt);
 
     if (cfg.jsonOutput) {
       await writeJsonOutput(cfg.jsonOutput, {
@@ -330,18 +370,10 @@ const main = async () => {
     startUsdcHuman: formatFixed(row.startAmount, startToken.decimals),
     netProfitUsdcHuman: formatFixed(row.netProfit, startToken.decimals)
   }));
-  for (const [idx, row] of winners.entries()) {
-    const route = row.hops.map((h) => `${h.tokenIn.symbol} -(${h.label})-> ${h.tokenOut.symbol}`).join(' ');
-    log.info(`opportunity-${idx + 1}`, {
-      route,
-      grossProfitUSDC: formatFixed(row.grossProfit, startToken.decimals),
-      gasCostUSDC: formatFixed(row.gasCostUsdc, startToken.decimals),
-      netProfitUSDC: formatFixed(row.netProfit, startToken.decimals)
-    });
-  }
+  renderTopRoutes(writeHuman, winners);
 
   const finalStats = { ...stats, trianglesSkippedNoHopOptions: stats.trianglesSkippedNoHopOptions + trianglesSkippedNoHopOptions };
-  log.info('stats', finalStats);
+  renderSummary(writeHuman, finalStats, Date.now() - startedAt);
 
   if (cfg.jsonOutput) {
     await writeJsonOutput(cfg.jsonOutput, {

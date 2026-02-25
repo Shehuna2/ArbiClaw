@@ -52,6 +52,13 @@ export interface SimResult {
   failReason?: string;
 }
 
+
+export interface DexErrorCounters {
+  timeouts: number;
+  callExceptions: number;
+  other: number;
+}
+
 export interface SimStats {
   trianglesConsidered: number;
   combosEnumerated: number;
@@ -70,4 +77,5 @@ export interface SimStats {
   errorsByDex: Record<string, number>;
   errorsByHop: Record<string, number>;
   topErrorsByDex: Record<string, string[]>;
+  errorTypeCountersByDex: Record<string, DexErrorCounters>;
 }

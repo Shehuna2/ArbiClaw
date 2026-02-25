@@ -41,11 +41,22 @@ const pushTopError = (stats: SimStats, dexId: string, summary: string) => {
   }
 };
 
+
+const classifyErrorSummary = (summary: string): 'timeouts' | 'callExceptions' | 'other' => {
+  const upper = summary.toUpperCase();
+  if (upper.includes('TIMEOUT') || upper.includes('ETIMEDOUT')) return 'timeouts';
+  if (upper.includes('CALL_EXCEPTION') || upper.includes('CALL EXCEPTION')) return 'callExceptions';
+  return 'other';
+};
+
 const markError = (stats: SimStats, dexId: string, hopKey: string, summary: string, debugHops: boolean) => {
   if (dexId === 'aerodrome' && summary.startsWith('STABLE_REVERT_EXPECTED') && !debugHops) return;
   stats.quoteFailures += 1;
   stats.errorsByDex[dexId] = (stats.errorsByDex[dexId] ?? 0) + 1;
   stats.errorsByHop[hopKey] = (stats.errorsByHop[hopKey] ?? 0) + 1;
+  if (!stats.errorTypeCountersByDex[dexId]) stats.errorTypeCountersByDex[dexId] = { timeouts: 0, callExceptions: 0, other: 0 };
+  const bucket = classifyErrorSummary(summary);
+  stats.errorTypeCountersByDex[dexId][bucket] += 1;
   pushTopError(stats, dexId, summary);
 };
 
@@ -87,7 +98,7 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
   } = params;
 
   const startAmount = toUnits(amountInHuman, startToken.decimals);
-  const minProfit = toUnits(minProfitHuman, startToken.decimals);
+  void minProfitHuman;
   const deadline = Date.now() + timeBudgetMs;
 
   const stats: SimStats = {
@@ -107,7 +118,8 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
     hop3OptionsMax: 0,
     errorsByDex: {},
     errorsByHop: {},
-    topErrorsByDex: {}
+    topErrorsByDex: {},
+    errorTypeCountersByDex: {}
   };
 
   let loggedQuoteFailures = 0;
@@ -186,7 +198,7 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
             log.warn('quote-failure', { triangle: triangle.id, failReason: sim.failReason, hops: hops.map((h) => h.label) });
             loggedQuoteFailures += 1;
           }
-          if (!sim.failed && sim.netProfit >= minProfit) results.push(sim);
+          if (!sim.failed) results.push(sim);
         }
       }
     }
@@ -292,6 +304,10 @@ const simulateCombo = async (
         failed: true,
         failReason: `${option.dexId} ${summary}`
       };
+    }
+
+    if (option.dexId === 'aerodrome' && quote.meta?.routeHops === 2 && typeof quote.meta.via === 'string') {
+      hop.label = `${hop.label}/via ${quote.meta.via}`;
     }
 
     if (traceAmounts && comboAttemptForTriangle <= 10) {
