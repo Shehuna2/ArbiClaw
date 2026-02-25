@@ -31,6 +31,8 @@ export interface HopOptionsBuild {
     tokenIn: string;
     tokenOut: string;
     uniPoolChecks: UniPoolCheck[];
+    optionLabels: string[];
+    dexCounts: Record<string, number>;
   };
 }
 
@@ -48,12 +50,18 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
   const aeroOptions: HopOption[] = [];
   const uniPoolChecks: UniPoolCheck[] = [];
 
+  // Build pure runtime quote options; do not precompute quote outputs here.
   if (adapters.uniswapv3) {
     const feeOrder = getPairFeeOrder(tokenIn.symbol, tokenOut.symbol, adapters.uniswapv3.feeTiers, feePrefs);
     for (const fee of feeOrder) {
+      let poolAddress = 'unknown';
       try {
-        const poolAddress = await adapters.uniswapv3.getPoolAddress(tokenIn, tokenOut, fee);
         const poolExists = await adapters.uniswapv3.hasPool(tokenIn, tokenOut, fee);
+        try {
+          poolAddress = await adapters.uniswapv3.getPoolAddress(tokenIn, tokenOut, fee);
+        } catch {
+          poolAddress = 'unknown';
+        }
         uniPoolChecks.push({ fee, poolAddress, hasPool: poolExists });
         if (!poolExists) continue;
 
@@ -66,6 +74,7 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
           }
         });
       } catch {
+        uniPoolChecks.push({ fee, poolAddress, hasPool: false });
         continue;
       }
     }
@@ -76,7 +85,7 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
       dexId: 'aerodrome',
       label: 'AERO:vol',
       quote: async (amountIn: bigint) => {
-        const result = await adapters.aerodrome?.quoteByMode(tokenIn, tokenOut, amountIn, false);
+        const result = await adapters.aerodrome?.quoteExactIn({ tokenIn, tokenOut, amountIn }, 'hopOptions');
         return result ? { amountOut: result.amountOut, gasUnitsEstimate: result.gasUnitsEstimate } : null;
       }
     });
@@ -94,13 +103,19 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
   }
 
   const options = isAeroPair(tokenIn, tokenOut) ? [...aeroOptions, ...uniOptions] : [...uniOptions, ...aeroOptions];
+  const dexCounts = options.reduce<Record<string, number>>((acc, option) => {
+    acc[option.dexId] = (acc[option.dexId] ?? 0) + 1;
+    return acc;
+  }, {});
 
   return {
     options,
     debug: {
       tokenIn: tokenIn.symbol,
       tokenOut: tokenOut.symbol,
-      uniPoolChecks
+      uniPoolChecks,
+      optionLabels: options.map((option) => option.label),
+      dexCounts
     }
   };
 };

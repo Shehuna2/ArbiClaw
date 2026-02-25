@@ -62,3 +62,18 @@ Stats include:
 - Uniswap v3 uses QuoterV2 struct ABI static calls.
 - Pair-specific fee preferences are loaded from `config/fees.json`.
 - AERO hops are Aerodrome-first in ordering only; Uniswap options are still enumerated when pools exist.
+
+
+## JSON output
+
+Write scan output to a JSON file:
+
+```bash
+npm run dev -- --dexes uniswapv3,aerodrome --tokenSubset USDC,WETH,AERO --json out/results.json
+```
+
+Write JSON to stdout instead (logs are redirected to stderr so stdout stays machine-readable):
+
+```bash
+npm run dev -- --dexes uniswapv3,aerodrome --tokenSubset USDC,WETH,AERO --json -
+```
