@@ -45,6 +45,19 @@ interface HopBuildParams {
 
 const isAeroPair = (tokenIn: Token, tokenOut: Token): boolean => tokenIn.symbol === 'AERO' || tokenOut.symbol === 'AERO';
 
+const shouldPreferUniFirst = (tokenIn: Token, tokenOut: Token): boolean => {
+  if (tokenOut.symbol === 'USDC') return true;
+  const isUsdcWethPair = (tokenIn.symbol === 'USDC' && tokenOut.symbol === 'WETH') || (tokenIn.symbol === 'WETH' && tokenOut.symbol === 'USDC');
+  if (isUsdcWethPair) return true;
+  return false;
+};
+
+const orderHopOptions = (tokenIn: Token, tokenOut: Token, uniOptions: HopOption[], aeroOptions: HopOption[]): HopOption[] => {
+  if (shouldPreferUniFirst(tokenIn, tokenOut)) return [...uniOptions, ...aeroOptions];
+  if (isAeroPair(tokenIn, tokenOut)) return [...aeroOptions, ...uniOptions];
+  return [...uniOptions, ...aeroOptions];
+};
+
 export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }: HopBuildParams): Promise<HopOptionsBuild> => {
   const uniOptions: HopOption[] = [];
   const aeroOptions: HopOption[] = [];
@@ -102,7 +115,7 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
     }
   }
 
-  const options = isAeroPair(tokenIn, tokenOut) ? [...aeroOptions, ...uniOptions] : [...uniOptions, ...aeroOptions];
+  const options = orderHopOptions(tokenIn, tokenOut, uniOptions, aeroOptions);
   const dexCounts = options.reduce<Record<string, number>>((acc, option) => {
     acc[option.dexId] = (acc[option.dexId] ?? 0) + 1;
     return acc;
