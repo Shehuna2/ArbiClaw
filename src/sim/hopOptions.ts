@@ -50,6 +50,7 @@ export const buildHopOptions = async ({ tokenIn, tokenOut, adapters, feePrefs }:
   const aeroOptions: HopOption[] = [];
   const uniPoolChecks: UniPoolCheck[] = [];
 
+  // Build pure runtime quote options; do not precompute quote outputs here.
   if (adapters.uniswapv3) {
     const feeOrder = getPairFeeOrder(tokenIn.symbol, tokenOut.symbol, adapters.uniswapv3.feeTiers, feePrefs);
     for (const fee of feeOrder) {

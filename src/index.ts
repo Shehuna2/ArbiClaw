@@ -264,6 +264,7 @@ const main = async () => {
     quoteConcurrency: cfg.quoteConcurrency,
     selfTest: cfg.selfTest,
     debugHops: cfg.debugHops,
+    traceAmounts: cfg.traceAmounts,
     fees: cfg.fees,
     feeConfigPath: cfg.feeConfigPath,
     aeroStablePairsPath: cfg.aeroStablePairsPath,
@@ -313,7 +314,8 @@ const main = async () => {
     timeBudgetMs: cfg.timeBudgetMs,
     quoteConcurrency: cfg.quoteConcurrency,
     feePrefs,
-    debugHops: cfg.debugHops
+    debugHops: cfg.debugHops,
+    traceAmounts: cfg.traceAmounts
   });
 
   const winners = results.sort((a, b) => cmpBigintDesc(a.netProfit, b.netProfit)).slice(0, cfg.topN);

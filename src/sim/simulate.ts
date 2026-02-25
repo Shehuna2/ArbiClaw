@@ -19,6 +19,7 @@ interface SimulateParams {
   quoteConcurrency: number;
   feePrefs: FeePrefs;
   debugHops: boolean;
+  traceAmounts: boolean;
 }
 
 interface SimulateOutput {
@@ -75,7 +76,8 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
     timeBudgetMs,
     quoteConcurrency,
     feePrefs,
-    debugHops
+    debugHops,
+    traceAmounts
   } = params;
 
   const startAmount = toUnits(amountInHuman, startToken.decimals);
@@ -172,7 +174,7 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
             { dex: o3.dexId, tokenIn: c, tokenOut: a, label: o3.label }
           ];
 
-          const sim = await simulateCombo(triangle, hops, [o1, o2, o3], startAmount, gasPriceWei, ethToUsdcPrice, adapters, stats, debugHops);
+          const sim = await simulateCombo(triangle, hops, [o1, o2, o3], startAmount, gasPriceWei, ethToUsdcPrice, adapters, stats, debugHops, traceAmounts, combosEnumeratedForTriangle);
           if (debugHops && sim.failed && loggedQuoteFailures < 5) {
             log.warn('quote-failure', { triangle: triangle.id, failReason: sim.failReason, hops: hops.map((h) => h.label) });
             loggedQuoteFailures += 1;
@@ -214,7 +216,9 @@ const simulateCombo = async (
   ethToUsdcPrice: number,
   adapters: DexAdapters,
   stats: SimStats,
-  debugHops: boolean
+  debugHops: boolean,
+  traceAmounts: boolean,
+  comboAttemptForTriangle: number
 ): Promise<SimResult> => {
   let amount = startAmount;
   let gasUnits = 0n;
@@ -230,6 +234,17 @@ const simulateCombo = async (
     } catch (error) {
       const hopKey = `hop${i + 1}:${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`;
       const errMsg = error instanceof Error ? error.message : String(error);
+      if (traceAmounts && comboAttemptForTriangle <= 10) {
+        log.warn('hop-fail', {
+          triangle: triangle.id,
+          comboAttemptForTriangle,
+          hop: i + 1,
+          pair: `${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`,
+          dex: option.dexId,
+          amountIn: amount.toString(),
+          err: errMsg
+        });
+      }
       markError(stats, option.dexId, hopKey, `THROW: ${errMsg}`.slice(0, 180), debugHops);
       return {
         route: triangle,
@@ -247,6 +262,17 @@ const simulateCombo = async (
     if (!quote || quote.amountOut <= 0n) {
       const hopKey = `hop${i + 1}:${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`;
       const summary = getLastDexError(adapters, option.dexId, debugHops);
+      if (traceAmounts && comboAttemptForTriangle <= 10) {
+        log.warn('hop-fail', {
+          triangle: triangle.id,
+          comboAttemptForTriangle,
+          hop: i + 1,
+          pair: `${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`,
+          dex: option.dexId,
+          amountIn: amount.toString(),
+          err: summary
+        });
+      }
       markError(stats, option.dexId, hopKey, summary, debugHops);
       return {
         route: triangle,
@@ -259,6 +285,18 @@ const simulateCombo = async (
         failed: true,
         failReason: `${option.dexId} ${summary}`
       };
+    }
+
+    if (traceAmounts && comboAttemptForTriangle <= 10) {
+      log.info('hop-trace', {
+        triangle: triangle.id,
+        comboAttemptForTriangle,
+        hop: i + 1,
+        pair: `${hop.tokenIn.symbol}->${hop.tokenOut.symbol}`,
+        dex: option.dexId,
+        amountIn: amount.toString(),
+        amountOut: quote.amountOut.toString()
+      });
     }
 
     amount = quote.amountOut;

@@ -18,6 +18,7 @@ export interface ScanConfig {
   quoteConcurrency: number;
   selfTest: boolean;
   debugHops: boolean;
+  traceAmounts: boolean;
   fees: number[];
   feeConfigPath?: string;
   aeroStablePairsPath?: string;

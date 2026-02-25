@@ -70,6 +70,7 @@ export const parseConfig = (): ScanConfig => {
     quoteConcurrency: getNumArg('quoteConcurrency', 6),
     selfTest: hasFlag('selfTest'),
     debugHops: hasFlag('debugHops'),
+    traceAmounts: hasFlag('traceAmounts'),
     fees,
     feeConfigPath: getArgValue('feeConfig') ?? DEFAULT_FEE_CONFIG_PATH,
     aeroStablePairsPath: getArgValue('aeroStablePairs') ?? DEFAULT_AERO_STABLE_PAIRS_PATH,
