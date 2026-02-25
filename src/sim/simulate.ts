@@ -5,9 +5,15 @@ import { RouteHop, SimResult, SimStats, Token, RouteCandidate } from '../core/ty
 import { DexAdapters, HopOption, HopOptionsBuild, buildHopOptions } from './hopOptions.js';
 import { runLimited } from '../utils/concurrency.js';
 
+
+export interface TriangleWithHopOptions {
+  triangle: RouteCandidate;
+  hopOptions: [HopOptionsBuild, HopOptionsBuild, HopOptionsBuild];
+}
+
 interface SimulateParams {
   adapters: DexAdapters;
-  triangles: RouteCandidate[];
+  triangles: TriangleWithHopOptions[];
   startToken: Token;
   amountInHuman: string;
   minProfitHuman: string;
@@ -111,11 +117,12 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
   let hop3Total = 0;
   let optionsSamples = 0;
 
-  const allResults = await runLimited(triangles, quoteConcurrency, async (triangle) => {
+  const allResults = await runLimited(triangles, quoteConcurrency, async (triangleEntry) => {
     if (Date.now() > deadline || stats.quoteAttempts >= maxTotalQuotes) return [] as SimResult[];
     stats.trianglesConsidered += 1;
 
-    const [hop1, hop2, hop3] = await getTriangleHopOptions(triangle, adapters, feePrefs);
+    const triangle = triangleEntry.triangle;
+    const [hop1, hop2, hop3] = triangleEntry.hopOptions;
 
     hop1Total += hop1.options.length;
     hop2Total += hop2.options.length;

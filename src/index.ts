@@ -11,7 +11,7 @@ import { cmpBigintDesc, formatFixed, toUnits } from './core/math.js';
 import { log } from './core/log.js';
 import { AerodromeQuoter } from './dex/aerodrome/AerodromeQuoter.js';
 import { UniswapV3Quoter } from './dex/uniswapv3/UniswapV3Quoter.js';
-import { simulateTriangles, deriveEthToUsdcPrice, getTriangleHopOptions } from './sim/simulate.js';
+import { simulateTriangles, deriveEthToUsdcPrice, getTriangleHopOptions, TriangleWithHopOptions } from './sim/simulate.js';
 import { generateTriangles } from './sim/triangles.js';
 
 const applySubset = (tokens: Token[], subset?: string[]): Token[] => {
@@ -123,8 +123,8 @@ const filterTrianglesWithHopOptions = async (
   adapters: { uniswapv3?: UniswapV3Quoter; aerodrome?: AerodromeQuoter },
   feePrefs: Awaited<ReturnType<typeof loadFeePrefs>>,
   debugHops: boolean
-): Promise<RouteCandidate[]> => {
-  const filtered: RouteCandidate[] = [];
+): Promise<TriangleWithHopOptions[]> => {
+  const filtered: TriangleWithHopOptions[] = [];
   let logged = 0;
 
   for (const triangle of triangles) {
@@ -160,7 +160,7 @@ const filterTrianglesWithHopOptions = async (
       continue;
     }
 
-    filtered.push(triangle);
+    filtered.push({ triangle, hopOptions: [hop1, hop2, hop3] });
   }
 
   return filtered;
@@ -249,8 +249,8 @@ const main = async () => {
 
   const midTokens = selectedTokens.filter((token) => token.symbol !== START_SYMBOL);
   const triangleCandidates = generateTriangles(startToken, midTokens, cfg.maxTriangles);
-  const triangles = await filterTrianglesWithHopOptions(triangleCandidates, adapters, feePrefs, cfg.debugHops);
-  const trianglesSkippedNoHopOptions = triangleCandidates.length - triangles.length;
+  const trianglesWithOptions = await filterTrianglesWithHopOptions(triangleCandidates, adapters, feePrefs, cfg.debugHops);
+  const trianglesSkippedNoHopOptions = triangleCandidates.length - trianglesWithOptions.length;
 
   log.info('scan-config', {
     rpc: cfg.rpcUrl,
@@ -271,12 +271,12 @@ const main = async () => {
     tokensPath: cfg.tokensPath,
     selectedTokens: selectedTokens.map((t) => t.symbol).sort(),
     dexes: enabledDexes,
-    triangles: triangles.length,
+    triangles: trianglesWithOptions.length,
     triangleCandidates: triangleCandidates.length,
     trianglesSkippedNoHopOptions
   });
 
-  if (!triangles.length) {
+  if (!trianglesWithOptions.length) {
     const stats = { ...emptyStats(trianglesSkippedNoHopOptions) };
     log.warn('No triangles generated after hop-option filtering.');
     log.info('stats', stats);
@@ -303,7 +303,7 @@ const main = async () => {
 
   const { results, stats } = await simulateTriangles({
     adapters,
-    triangles,
+    triangles: trianglesWithOptions,
     startToken,
     amountInHuman: cfg.amountInHuman,
     minProfitHuman: cfg.minProfitHuman,
