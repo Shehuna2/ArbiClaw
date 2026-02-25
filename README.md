@@ -62,3 +62,42 @@ Stats include:
 - Uniswap v3 uses QuoterV2 struct ABI static calls.
 - Pair-specific fee preferences are loaded from `config/fees.json`.
 - AERO hops are Aerodrome-first in ordering only; Uniswap options are still enumerated when pools exist.
+
+
+## JSON output
+
+Write scan output to a JSON file:
+
+```bash
+npm run dev -- --dexes uniswapv3,aerodrome --tokenSubset USDC,WETH,AERO --json out/results.json
+```
+
+Write JSON to stdout instead (logs are redirected to stderr so stdout stays machine-readable):
+
+```bash
+npm run dev -- --dexes uniswapv3,aerodrome --tokenSubset USDC,WETH,AERO --json -
+```
+
+
+## Human-readable output
+
+Default CLI output is concise and human-readable: header, top completed routes, then summary stats.
+
+Example:
+
+```text
+=== ArbiClaw Simulation ===
+chain=Base | rpc=mainnet.base.org | dexes=uniswapv3,aerodrome
+tokens=AERO,USDC,WETH | amount=100 | maxTriangles=50 | maxCombosPerTriangle=300 | timeBudgetMs=15000
+
+Top routes (completed):
+ 1. USDC-(UNI:500)->WETH WETH-(UNI:500)->AERO AERO-(AERO:vol/via WETH)->USDC
+    startUSDC=100.000000 endUSDC=99.367105 hops=3
+    gross=-0.632895 gas=0.112000 net=-0.744895
+
+Summary:
+trianglesConsidered=12 combosEnumerated=96 quoteAttempts=240 quoteFailures=21 elapsedMs=14876
+errorCountersByDex:
+  aerodrome: timeouts=1 callExceptions=14 other=3 total=18
+  uniswapv3: timeouts=0 callExceptions=2 other=1 total=3
+```

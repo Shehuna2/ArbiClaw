@@ -17,12 +17,28 @@ const getArgValue = (name: string): string | undefined => {
 
 const hasFlag = (name: string): boolean => process.argv.includes(`--${name}`);
 
+
+const getRequiredArgValue = (name: string): string => {
+  const idx = process.argv.indexOf(`--${name}`);
+  if (idx === -1) throw new Error(`Missing --${name}`);
+  if (idx + 1 >= process.argv.length || process.argv[idx + 1].startsWith('--')) {
+    throw new Error(`Flag --${name} requires a value.`);
+  }
+  return process.argv[idx + 1];
+};
+
 const getNumArg = (name: string, fallback: number): number => {
   const raw = getArgValue(name);
   if (!raw) return fallback;
   const value = Number(raw);
   if (!Number.isFinite(value)) throw new Error(`Invalid --${name}: ${raw}`);
   return value;
+};
+
+const getDecimalArg = (name: string, fallback: string): string => {
+  const raw = getArgValue(name);
+  if (!raw) return fallback;
+  return raw.trim();
 };
 
 export const parseConfig = (): ScanConfig => {
@@ -40,10 +56,12 @@ export const parseConfig = (): ScanConfig => {
   const dexes = dexesRaw ? dexesRaw.split(',').map((x) => x.trim().toLowerCase()).filter(Boolean) : DEFAULT_DEXES;
   if (!dexes.length) throw new Error('No dexes enabled.');
 
+  const jsonOutput = hasFlag('json') ? getRequiredArgValue('json') : undefined;
+
   return {
     rpcUrl,
-    amountInHuman: getNumArg('amount', 100),
-    minProfitHuman: getNumArg('minProfit', 0),
+    amountInHuman: getDecimalArg('amount', '100'),
+    minProfitHuman: getDecimalArg('minProfit', '0'),
     topN: getNumArg('top', 20),
     maxTriangles: getNumArg('maxTriangles', 200),
     maxCombosPerTriangle: getNumArg('maxCombosPerTriangle', 300),
@@ -52,11 +70,13 @@ export const parseConfig = (): ScanConfig => {
     quoteConcurrency: getNumArg('quoteConcurrency', 6),
     selfTest: hasFlag('selfTest'),
     debugHops: hasFlag('debugHops'),
+    traceAmounts: hasFlag('traceAmounts'),
     fees,
     feeConfigPath: getArgValue('feeConfig') ?? DEFAULT_FEE_CONFIG_PATH,
     aeroStablePairsPath: getArgValue('aeroStablePairs') ?? DEFAULT_AERO_STABLE_PAIRS_PATH,
     tokensPath: getArgValue('tokens') ?? DEFAULT_TOKENS_PATH,
     tokenSubset,
-    dexes
+    dexes,
+    jsonOutput
   };
 };
