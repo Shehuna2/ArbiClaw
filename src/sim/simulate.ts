@@ -104,6 +104,7 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
   const stats: SimStats = {
     trianglesConsidered: 0,
     combosEnumerated: 0,
+    stoppedEarly: false,
     trianglesSkippedNoHopOptions: 0,
     quoteAttempts: 0,
     quoteFailures: 0,
@@ -129,8 +130,21 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
   let hop3Total = 0;
   let optionsSamples = 0;
 
+  const markTimeBudgetStop = () => {
+    if (!stats.stoppedEarly) {
+      stats.stoppedEarly = true;
+      stats.stopReason = 'time budget';
+    }
+  };
+
+  const isPastDeadline = () => Date.now() >= deadline;
+
   const allResults = await runLimited(triangles, quoteConcurrency, async (triangleEntry) => {
-    if (Date.now() > deadline || stats.quoteAttempts >= maxTotalQuotes) return [] as SimResult[];
+    if (isPastDeadline()) {
+      markTimeBudgetStop();
+      return [] as SimResult[];
+    }
+    if (stats.quoteAttempts >= maxTotalQuotes) return [] as SimResult[];
     stats.trianglesConsidered += 1;
 
     const triangle = triangleEntry.triangle;
@@ -170,7 +184,8 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
     for (const o1 of hop1.options) {
       for (const o2 of hop2.options) {
         for (const o3 of hop3.options) {
-          if (combosEnumeratedForTriangle >= maxCombosPerTriangle || Date.now() > deadline || stats.quoteAttempts >= maxTotalQuotes) {
+          if (combosEnumeratedForTriangle >= maxCombosPerTriangle || isPastDeadline() || stats.quoteAttempts >= maxTotalQuotes) {
+            if (isPastDeadline()) markTimeBudgetStop();
             if (debugHops && loggedTriangleComboDebug < 8) {
               log.info('triangle-combo-enumeration', {
                 route: triangle.id,
@@ -193,7 +208,7 @@ export const simulateTriangles = async (params: SimulateParams): Promise<Simulat
             { dex: o3.dexId, tokenIn: c, tokenOut: a, label: o3.label }
           ];
 
-          const sim = await simulateCombo(triangle, hops, [o1, o2, o3], startAmount, gasPriceWei, ethToUsdcPrice, adapters, stats, debugHops, traceAmounts, combosEnumeratedForTriangle);
+          const sim = await simulateCombo(triangle, hops, [o1, o2, o3], startAmount, gasPriceWei, ethToUsdcPrice, adapters, stats, debugHops, traceAmounts, combosEnumeratedForTriangle, deadline);
           if (debugHops && sim.failed && loggedQuoteFailures < 5) {
             log.warn('quote-failure', { triangle: triangle.id, failReason: sim.failReason, hops: hops.map((h) => h.label) });
             loggedQuoteFailures += 1;
@@ -237,14 +252,34 @@ const simulateCombo = async (
   stats: SimStats,
   debugHops: boolean,
   traceAmounts: boolean,
-  comboAttemptForTriangle: number
+  comboAttemptForTriangle: number,
+  deadline: number
 ): Promise<SimResult> => {
   let amount = startAmount;
   let gasUnits = 0n;
+  let gasKnown = ethToUsdcPrice > 0;
 
   for (let i = 0; i < options.length; i += 1) {
     const option = options[i];
     const hop = hops[i];
+
+    if (Date.now() >= deadline) {
+      stats.stoppedEarly = true;
+      stats.stopReason = 'time budget';
+      return {
+        route: triangle,
+        hops,
+        startAmount,
+        finalAmount: amount,
+        grossProfit: 0n,
+        gasCostUsdc: 0n,
+        gasKnown: false,
+        netProfit: 0n,
+        failed: true,
+        failReason: 'time budget'
+      };
+    }
+
     stats.quoteAttempts += 1;
 
     let quote: Awaited<ReturnType<HopOption['quote']>>;
@@ -272,6 +307,7 @@ const simulateCombo = async (
         finalAmount: amount,
         grossProfit: 0n,
         gasCostUsdc: 0n,
+        gasKnown: false,
         netProfit: 0n,
         failed: true,
         failReason: `${option.dexId} THROW: ${errMsg}`
@@ -300,6 +336,7 @@ const simulateCombo = async (
         finalAmount: amount,
         grossProfit: 0n,
         gasCostUsdc: 0n,
+        gasKnown: false,
         netProfit: 0n,
         failed: true,
         failReason: `${option.dexId} ${summary}`
@@ -323,12 +360,16 @@ const simulateCombo = async (
     }
 
     amount = quote.amountOut;
-    gasUnits += quote.gasUnitsEstimate ?? 150_000n;
+    if (quote.gasUnitsEstimate === undefined) {
+      gasKnown = false;
+    } else {
+      gasUnits += quote.gasUnitsEstimate;
+    }
   }
 
   const gross = amount - startAmount;
   const gasWei = gasUnits * gasPriceWei;
-  const gasUsdc = ethToUsdcPrice > 0
+  const gasUsdc = gasKnown
     ? (gasWei * BigInt(Math.round(ethToUsdcPrice * 1_000_000))) / 1_000_000_000_000_000_000n
     : 0n;
 
@@ -339,7 +380,8 @@ const simulateCombo = async (
     finalAmount: amount,
     grossProfit: gross,
     gasCostUsdc: gasUsdc,
-    netProfit: gross - gasUsdc,
+    gasKnown,
+    netProfit: gasKnown ? gross - gasUsdc : gross,
     failed: false
   };
 };

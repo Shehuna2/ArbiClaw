@@ -47,6 +47,7 @@ export interface SimResult {
   finalAmount: bigint;
   grossProfit: bigint;
   gasCostUsdc: bigint;
+  gasKnown: boolean;
   netProfit: bigint;
   failed: boolean;
   failReason?: string;
@@ -62,6 +63,8 @@ export interface DexErrorCounters {
 export interface SimStats {
   trianglesConsidered: number;
   combosEnumerated: number;
+  stoppedEarly: boolean;
+  stopReason?: string;
   trianglesSkippedNoHopOptions: number;
   quoteAttempts: number;
   quoteFailures: number;

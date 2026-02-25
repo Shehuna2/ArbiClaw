@@ -93,10 +93,11 @@ tokens=AERO,USDC,WETH | amount=100 | maxTriangles=50 | maxCombosPerTriangle=300 
 Top routes (completed):
  1. USDC-(UNI:500)->WETH WETH-(UNI:500)->AERO AERO-(AERO:vol/via WETH)->USDC
     startUSDC=100.000000 endUSDC=99.367105 hops=3
-    gross=-0.632895 gas=0.112000 net=-0.744895
+    gross=-0.632895 gas=NA net=NA
 
 Summary:
-trianglesConsidered=12 combosEnumerated=96 quoteAttempts=240 quoteFailures=21 elapsedMs=14876
+trianglesConsidered=12 combosEnumerated=96 quoteAttempts=240 quoteFailures=21 elapsedMs=14876 timeBudgetMs=15000
+stoppedEarly=true (time budget)
 errorCountersByDex:
   aerodrome: timeouts=1 callExceptions=14 other=3 total=18
   uniswapv3: timeouts=0 callExceptions=2 other=1 total=3

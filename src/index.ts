@@ -196,6 +196,7 @@ const writeJsonOutput = async (pathOrDash: string, payload: unknown): Promise<vo
 const emptyStats = (trianglesSkippedNoHopOptions: number): SimStats => ({
   trianglesConsidered: 0,
   combosEnumerated: 0,
+  stoppedEarly: false,
   trianglesSkippedNoHopOptions,
   quoteAttempts: 0,
   quoteFailures: 0,
@@ -238,11 +239,16 @@ const renderTopRoutes = (write: (line: string) => void, winners: Awaited<ReturnT
     return;
   }
 
+  const allGasUnknownOrZero = winners.every((row) => !row.gasKnown || row.gasCostUsdc === 0n);
+
   for (const [idx, row] of winners.entries()) {
     const route = row.hops.map((h) => `${h.tokenIn.symbol}-(${h.label})->${h.tokenOut.symbol}`).join(' ');
+    const gasDisplay = (!row.gasKnown || (allGasUnknownOrZero && row.gasCostUsdc === 0n)) ? 'NA' : formatUsdc(row.gasCostUsdc);
+    const netDisplay = row.gasKnown ? formatSignedUsdc(row.netProfit) : 'NA';
+
     write(`${padLeft(String(idx + 1), 2)}. ${route}`);
     write(`    startUSDC=${formatUsdc(row.startAmount)} endUSDC=${formatUsdc(row.finalAmount)} hops=${row.hops.length}`);
-    write(`    gross=${formatSignedUsdc(row.grossProfit)} gas=${formatUsdc(row.gasCostUsdc)} net=${formatSignedUsdc(row.netProfit)}`);
+    write(`    gross=${formatSignedUsdc(row.grossProfit)} gas=${gasDisplay} net=${netDisplay}`);
   }
   write('');
 };
@@ -250,10 +256,14 @@ const renderTopRoutes = (write: (line: string) => void, winners: Awaited<ReturnT
 const renderSummary = (
   write: (line: string) => void,
   stats: SimStats,
-  elapsedMs: number
+  elapsedMs: number,
+  timeBudgetMs: number
 ) => {
   write('Summary:');
-  write(`trianglesConsidered=${stats.trianglesConsidered} combosEnumerated=${stats.combosEnumerated} quoteAttempts=${stats.quoteAttempts} quoteFailures=${stats.quoteFailures} elapsedMs=${elapsedMs}`);
+  write(`trianglesConsidered=${stats.trianglesConsidered} combosEnumerated=${stats.combosEnumerated} quoteAttempts=${stats.quoteAttempts} quoteFailures=${stats.quoteFailures} elapsedMs=${elapsedMs} timeBudgetMs=${timeBudgetMs}`);
+  if (stats.stoppedEarly && stats.stopReason === 'time budget') {
+    write('stoppedEarly=true (time budget)');
+  }
 
   const dexes = Object.keys(stats.errorsByDex).sort();
   if (dexes.length) {
@@ -319,7 +329,7 @@ const main = async () => {
   if (!trianglesWithOptions.length) {
     const stats = { ...emptyStats(trianglesSkippedNoHopOptions) };
     writeHuman('No completed routes. Try fewer tokens, increase timeBudget, or use --debugHops.');
-    renderSummary(writeHuman, stats, Date.now() - startedAt);
+    renderSummary(writeHuman, stats, Date.now() - startedAt, cfg.timeBudgetMs);
 
     if (cfg.jsonOutput) {
       await writeJsonOutput(cfg.jsonOutput, {
@@ -340,6 +350,8 @@ const main = async () => {
   const gasPriceWei = feeData.gasPrice ?? feeData.maxFeePerGas ?? 1_000_000_000n;
 
   const ethToUsdcPrice = usdc && weth ? await deriveEthToUsdcPrice(adapters, usdc, weth) : 0;
+
+  const simulationStartedAt = Date.now();
 
   const { results, stats } = await simulateTriangles({
     adapters,
@@ -373,7 +385,7 @@ const main = async () => {
   renderTopRoutes(writeHuman, winners);
 
   const finalStats = { ...stats, trianglesSkippedNoHopOptions: stats.trianglesSkippedNoHopOptions + trianglesSkippedNoHopOptions };
-  renderSummary(writeHuman, finalStats, Date.now() - startedAt);
+  renderSummary(writeHuman, finalStats, Date.now() - simulationStartedAt, cfg.timeBudgetMs);
 
   if (cfg.jsonOutput) {
     await writeJsonOutput(cfg.jsonOutput, {
