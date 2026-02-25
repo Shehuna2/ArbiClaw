@@ -8,8 +8,8 @@ export interface Token {
 
 export interface ScanConfig {
   rpcUrl: string;
-  amountInHuman: number;
-  minProfitHuman: number;
+  amountInHuman: string;
+  minProfitHuman: string;
   topN: number;
   maxTriangles: number;
   maxCombosPerTriangle: number;
@@ -18,12 +18,14 @@ export interface ScanConfig {
   quoteConcurrency: number;
   selfTest: boolean;
   debugHops: boolean;
+  traceAmounts: boolean;
   fees: number[];
   feeConfigPath?: string;
   aeroStablePairsPath?: string;
   tokensPath: string;
   tokenSubset?: string[];
   dexes: string[];
+  jsonOutput?: string;
 }
 
 export interface RouteHop {
@@ -45,14 +47,24 @@ export interface SimResult {
   finalAmount: bigint;
   grossProfit: bigint;
   gasCostUsdc: bigint;
+  gasKnown: boolean;
   netProfit: bigint;
   failed: boolean;
   failReason?: string;
 }
 
+
+export interface DexErrorCounters {
+  timeouts: number;
+  callExceptions: number;
+  other: number;
+}
+
 export interface SimStats {
   trianglesConsidered: number;
   combosEnumerated: number;
+  stoppedEarly: boolean;
+  stopReason?: string;
   trianglesSkippedNoHopOptions: number;
   quoteAttempts: number;
   quoteFailures: number;
@@ -68,4 +80,5 @@ export interface SimStats {
   errorsByDex: Record<string, number>;
   errorsByHop: Record<string, number>;
   topErrorsByDex: Record<string, string[]>;
+  errorTypeCountersByDex: Record<string, DexErrorCounters>;
 }
