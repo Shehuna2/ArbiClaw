@@ -1,15 +1,15 @@
 import { Contract, JsonRpcProvider } from 'ethers';
 import { StableConfig, isStableEligiblePair } from '../../config/stables.js';
-import { QuoteResult } from '../DexQuoter.js';
+import { QuoteParams, QuoteResult } from '../DexQuoter.js';
 import { Token } from '../../core/types.js';
+import { log } from '../../core/log.js';
 
 const AERODROME_ROUTER = '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43';
 const AERODROME_FACTORY = '0x420DD381b31aEf6683db6B902084cB0FFECe40Da';
 const ROUTER_ABI = [
-  'function getAmountsOut(uint256 amountIn, tuple(address from,address to,bool stable,address factory)[] routes) external view returns (uint256[] amounts)'
+  'function getAmountsOut(uint256 amountIn, tuple(address from,address to,bool stable,address factory)[] routes) view returns (uint256[] amounts)'
 ];
-const FACTORY_ABI = ['function getPool(address tokenA, address tokenB, bool stable) external view returns (address pool)'];
-const ZERO = '0x0000000000000000000000000000000000000000';
+const GET_AMOUNTS_OUT_FN = 'getAmountsOut(uint256,(address,address,bool,address)[])';
 
 interface CachedQuote {
   expiryMs: number;
@@ -25,27 +25,69 @@ const summarizeErr = (error: unknown): string => {
 export class AerodromeQuoter {
   public readonly id = 'aerodrome';
   private readonly router: Contract;
-  private readonly factory: Contract;
   private readonly cache = new Map<string, CachedQuote>();
   private readonly ttlMs = 8_000;
   private lastError = '';
+  private selectorLogged = false;
 
   constructor(rpcUrl: string, private readonly stableConfig: StableConfig) {
     const provider = new JsonRpcProvider(rpcUrl);
     this.router = new Contract(AERODROME_ROUTER, ROUTER_ABI, provider);
-    this.factory = new Contract(AERODROME_FACTORY, FACTORY_ABI, provider);
+
+    const selector = this.router.interface.getFunction(GET_AMOUNTS_OUT_FN)?.selector ?? 'unknown';
+    if (selector !== '0x5509a1ac') {
+      throw new Error(`Aerodrome ABI mismatch: expected selector 0x5509a1ac, got ${selector}`);
+    }
   }
 
-  getLastError(): string {
-    return this.lastError;
+  getLastError(includeSelector = false): string {
+    if (!includeSelector) return this.lastError;
+    const selector = this.router.interface.getFunction(GET_AMOUNTS_OUT_FN)?.selector ?? 'unknown';
+    return `[selector:${selector}] ${this.lastError}`.trim();
   }
 
   canUseStable(tokenIn: Token, tokenOut: Token): boolean {
     return isStableEligiblePair(tokenIn, tokenOut, this.stableConfig);
   }
 
+  private maybeLogSelectorInvariant(): void {
+    if (this.selectorLogged) return;
+    if (!process.argv.includes('--debugHops') && !process.argv.includes('--selfTest')) return;
+
+    const selector = this.router.interface.getFunction(GET_AMOUNTS_OUT_FN)?.selector ?? 'unknown';
+    if (selector !== '0x5509a1ac') {
+      throw new Error(`Aerodrome selector mismatch: expected 0x5509a1ac, got ${selector}`);
+    }
+    log.info('aerodrome-selector', { selector, expectedSelector: '0x5509a1ac' });
+    this.selectorLogged = true;
+  }
+
+  encodeGetAmountsOutCalldata(tokenIn: string, tokenOut: string, amountIn: bigint, stable: boolean): string {
+    const routes: [string, string, boolean, string][] = [[tokenIn, tokenOut, stable, AERODROME_FACTORY]];
+    return this.router.interface.encodeFunctionData(GET_AMOUNTS_OUT_FN, [amountIn, routes]);
+  }
+
+  async quoteExactIn(params: QuoteParams, callsite = 'unknown'): Promise<QuoteResult | null> {
+    if (process.argv.includes('--debugHops')) {
+      const selector = this.router.interface.getFunction(GET_AMOUNTS_OUT_FN)?.selector ?? 'unknown';
+      const routes: [string, string, boolean, string][] = [[params.tokenIn.address, params.tokenOut.address, false, AERODROME_FACTORY]];
+      const calldata = this.router.interface.encodeFunctionData(GET_AMOUNTS_OUT_FN, [params.amountIn, routes]);
+      const calldataSelector = calldata.slice(0, 10);
+      if (calldataSelector !== '0x5509a1ac') {
+        throw new Error(`Aerodrome selector drift detected: ${calldataSelector} callsite=${callsite}`);
+      }
+      log.info('aerodrome-quoteexactin-calldata', {
+        callsite,
+        selector,
+        first10Bytes: calldata.slice(0, 22)
+      });
+    }
+
+    return this.quoteByMode(params.tokenIn, params.tokenOut, params.amountIn, false);
+  }
+
   async quotePreferred(tokenIn: Token, tokenOut: Token, amountIn: bigint): Promise<QuoteResult | null> {
-    const qVol = await this.quoteByMode(tokenIn, tokenOut, amountIn, false);
+    const qVol = await this.quoteExactIn({ tokenIn, tokenOut, amountIn }, 'quotePreferred');
     if (qVol) return qVol;
     if (!this.canUseStable(tokenIn, tokenOut)) {
       this.lastError = 'STABLE_SKIPPED: pair not stable-eligible';
@@ -55,6 +97,7 @@ export class AerodromeQuoter {
   }
 
   async quoteByMode(tokenIn: Token, tokenOut: Token, amountIn: bigint, stable: boolean): Promise<QuoteResult | null> {
+    this.maybeLogSelectorInvariant();
     if (stable && !this.canUseStable(tokenIn, tokenOut)) {
       this.lastError = 'STABLE_SKIPPED: pair not stable-eligible';
       return null;
@@ -66,24 +109,16 @@ export class AerodromeQuoter {
     if (hit && hit.expiryMs > now) return hit.result;
 
     try {
-      const pool = await this.factory.getPool(tokenIn.address, tokenOut.address, stable);
-      if (pool === ZERO) {
-        const result = null;
-        this.cache.set(key, { expiryMs: now + this.ttlMs, result });
-        this.lastError = stable ? 'STABLE_SKIPPED: no pool' : 'NO_POOL: aerodrome volatile pair not deployed';
-        return result;
-      }
-
-      const routes = [[tokenIn.address, tokenOut.address, stable, AERODROME_FACTORY]];
-      const amounts: bigint[] = await this.router.getAmountsOut(amountIn, routes);
+      const routes: [string, string, boolean, string][] = [[tokenIn.address, tokenOut.address, stable, AERODROME_FACTORY]];
+      const amounts: bigint[] = await this.router.getFunction(GET_AMOUNTS_OUT_FN).staticCall(amountIn, routes);
       const amountOut = amounts[amounts.length - 1];
       const result = amountOut > 0n ? { amountOut, gasUnitsEstimate: undefined, meta: { stable } } : null;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result });
-      this.lastError = result ? '' : 'ZERO_OUT: aerodrome returned zero amount';
+      this.lastError = result ? '' : 'ZERO_OUT: routerQuote returned zero amount';
       return result;
     } catch (error) {
       const summary = summarizeErr(error);
-      this.lastError = stable ? `STABLE_REVERT_EXPECTED: ${summary}` : summary;
+      this.lastError = stable ? `routerQuote STABLE_REVERT_EXPECTED: ${summary}` : `routerQuote: ${summary}`;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result: null });
       return null;
     }
