@@ -6,10 +6,13 @@ import { log } from '../../core/log.js';
 
 const AERODROME_ROUTER = '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43';
 const AERODROME_FACTORY = '0x420DD381b31aEf6683db6B902084cB0FFECe40Da';
+const WETH_BASE = '0x4200000000000000000000000000000000000006';
 const ROUTER_ABI = [
   'function getAmountsOut(uint256 amountIn, tuple(address from,address to,bool stable,address factory)[] routes) view returns (uint256[] amounts)'
 ];
 const GET_AMOUNTS_OUT_FN = 'getAmountsOut(uint256,(address,address,bool,address)[])';
+
+type AeroRoute = [string, string, boolean, string];
 
 interface CachedQuote {
   expiryMs: number;
@@ -21,6 +24,8 @@ const summarizeErr = (error: unknown): string => {
   const msg = error instanceof Error ? error.message : String(error);
   return `${code}: ${msg}`.slice(0, 180);
 };
+
+const shouldLogRoute = (): boolean => process.argv.includes('--debugHops') || process.argv.includes('--traceAmounts');
 
 export class AerodromeQuoter {
   public readonly id = 'aerodrome';
@@ -63,14 +68,20 @@ export class AerodromeQuoter {
   }
 
   encodeGetAmountsOutCalldata(tokenIn: string, tokenOut: string, amountIn: bigint, stable: boolean): string {
-    const routes: [string, string, boolean, string][] = [[tokenIn, tokenOut, stable, AERODROME_FACTORY]];
+    const routes: AeroRoute[] = [[tokenIn, tokenOut, stable, AERODROME_FACTORY]];
     return this.router.interface.encodeFunctionData(GET_AMOUNTS_OUT_FN, [amountIn, routes]);
+  }
+
+  private async quoteRoutes(amountIn: bigint, routes: AeroRoute[]): Promise<bigint | null> {
+    const amounts: bigint[] = await this.router.getFunction(GET_AMOUNTS_OUT_FN).staticCall(amountIn, routes);
+    const amountOut = amounts[amounts.length - 1];
+    return amountOut > 0n ? amountOut : null;
   }
 
   async quoteExactIn(params: QuoteParams, callsite = 'unknown'): Promise<QuoteResult | null> {
     if (process.argv.includes('--debugHops')) {
       const selector = this.router.interface.getFunction(GET_AMOUNTS_OUT_FN)?.selector ?? 'unknown';
-      const routes: [string, string, boolean, string][] = [[params.tokenIn.address, params.tokenOut.address, false, AERODROME_FACTORY]];
+      const routes: AeroRoute[] = [[params.tokenIn.address, params.tokenOut.address, false, AERODROME_FACTORY]];
       const calldata = this.router.interface.encodeFunctionData(GET_AMOUNTS_OUT_FN, [params.amountIn, routes]);
       const calldataSelector = calldata.slice(0, 10);
       if (calldataSelector !== '0x5509a1ac') {
@@ -108,17 +119,74 @@ export class AerodromeQuoter {
     const hit = this.cache.get(key);
     if (hit && hit.expiryMs > now) return hit.result;
 
+    if (!stable) {
+      const candidates: Array<{ hops: number; via?: string; routes: AeroRoute[] }> = [
+        { hops: 1, routes: [[tokenIn.address, tokenOut.address, false, AERODROME_FACTORY]] }
+      ];
+
+      const weth = WETH_BASE;
+      const tokenInIsWeth = tokenIn.address.toLowerCase() === weth.toLowerCase();
+      const tokenOutIsWeth = tokenOut.address.toLowerCase() === weth.toLowerCase();
+      if (!tokenInIsWeth && !tokenOutIsWeth) {
+        if (tokenOut.symbol === 'USDC') {
+          candidates.push({
+            hops: 2,
+            via: 'WETH',
+            routes: [
+              [tokenIn.address, weth, false, AERODROME_FACTORY],
+              [weth, tokenOut.address, false, AERODROME_FACTORY]
+            ]
+          });
+        }
+      }
+
+      let best: QuoteResult | null = null;
+      let bestMeta: { hops: number; via?: string } = { hops: 1 };
+      const failures: string[] = [];
+      for (const candidate of candidates) {
+        try {
+          const out = await this.quoteRoutes(amountIn, candidate.routes);
+          if (!out) {
+            failures.push(`routerQuote: ZERO_OUT hops=${candidate.hops}${candidate.via ? ` via=${candidate.via}` : ''}`);
+            continue;
+          }
+          if (!best || out > best.amountOut) {
+            best = { amountOut: out, gasUnitsEstimate: undefined, meta: { stable: false, routeHops: candidate.hops, via: candidate.via } };
+            bestMeta = { hops: candidate.hops, via: candidate.via };
+          }
+        } catch (error) {
+          failures.push(`routerQuote: ${summarizeErr(error)} hops=${candidate.hops}${candidate.via ? ` via=${candidate.via}` : ''}`);
+        }
+      }
+
+      if (best) {
+        this.cache.set(key, { expiryMs: now + this.ttlMs, result: best });
+        this.lastError = '';
+        if (shouldLogRoute()) {
+          log.info('aero-route-chosen', {
+            pair: `${tokenIn.symbol}->${tokenOut.symbol}`,
+            hops: bestMeta.hops,
+            via: bestMeta.via ?? null
+          });
+        }
+        return best;
+      }
+
+      this.lastError = failures[0] ?? 'routerQuote: no successful volatile route';
+      this.cache.set(key, { expiryMs: now + this.ttlMs, result: null });
+      return null;
+    }
+
     try {
-      const routes: [string, string, boolean, string][] = [[tokenIn.address, tokenOut.address, stable, AERODROME_FACTORY]];
-      const amounts: bigint[] = await this.router.getFunction(GET_AMOUNTS_OUT_FN).staticCall(amountIn, routes);
-      const amountOut = amounts[amounts.length - 1];
-      const result = amountOut > 0n ? { amountOut, gasUnitsEstimate: undefined, meta: { stable } } : null;
+      const routes: AeroRoute[] = [[tokenIn.address, tokenOut.address, true, AERODROME_FACTORY]];
+      const amountOut = await this.quoteRoutes(amountIn, routes);
+      const result = amountOut ? { amountOut, gasUnitsEstimate: undefined, meta: { stable: true, routeHops: 1 } } : null;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result });
       this.lastError = result ? '' : 'ZERO_OUT: routerQuote returned zero amount';
       return result;
     } catch (error) {
       const summary = summarizeErr(error);
-      this.lastError = stable ? `routerQuote STABLE_REVERT_EXPECTED: ${summary}` : `routerQuote: ${summary}`;
+      this.lastError = `routerQuote STABLE_REVERT_EXPECTED: ${summary}`;
       this.cache.set(key, { expiryMs: now + this.ttlMs, result: null });
       return null;
     }
